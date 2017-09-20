@@ -1,6 +1,6 @@
 from keras.models import Sequential, Model
 from keras.layers import Dense, Reshape, Flatten, Activation, Input, Lambda
-from keras.layers.convolutional import Conv2D, UpSampling2D
+from keras.layers.convolutional import Conv2D, UpSampling2D, Conv2DTranspose
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.merge import Add
@@ -47,7 +47,7 @@ class LayerNorm(Layer):
 
 def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
     assert resample in ["UP", "SAME", "DOWN"]
-   
+
     if resample == "UP":
         shortcut = UpSampling2D(size=(2, 2)) (x)        
         shortcut = Conv2D(nfilters, kernel_size, padding = 'same',
@@ -57,11 +57,11 @@ def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
         convpath = Activation('relu') (convpath)
         convpath = UpSampling2D(size=(2, 2))(convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
-                                 use_bias = False, padding='same')(convpath)        
+                                      use_bias = False, padding='same')(convpath)
         convpath = norm() (convpath)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
-                                 use_bias = True, padding='same') (convpath)
+                                     use_bias = True, padding='same') (convpath)
         
         y = Add() ([shortcut, convpath])
     elif resample == "SAME":      

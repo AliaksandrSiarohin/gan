@@ -1,6 +1,7 @@
 from keras import backend as K
 from keras.optimizers import Adam
 from gan import GAN
+from functools import partial
 
 class WGAN_GP(GAN):
     """
@@ -36,15 +37,16 @@ class WGAN_GP(GAN):
         averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
         
         gp_list = []
-        for averaged_samples_part in averaged_samples:
-            gradients = K.gradients(K.sum(self._discriminator(averaged_samples)), averaged_samples_part)[0]
-            gradients = K.reshape(gradients, (self._batch_size, -1))
-            gradient_l2_norm = K.sqrt(K.sum(K.square(gradients), axis = 1))
+        
+        gradients = K.gradients(K.sum(self._discriminator(averaged_samples)), averaged_samples)
+        for gradient in gradients:
+            gradient = K.reshape(gradient, (self._batch_size, -1))
+            gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis = 1))
             gradient_penalty = self._gradient_penalty_weight * K.square(1 - gradient_l2_norm)
-            gp_list.append(K.mean(gradient_penalty))
+            gp_list.append(K.mean(gradient_penalty))        
         
-        
-        gp_fn_list = [lambda y_true, y_pred: gp_list[i] for i in range(len(gp_list))]
+        fn = lambda y_true, y_pred, index: gp_list[index]
+        gp_fn_list = [partial(fn, index=i)  for i in range(len(gp_list))]
         for i, gp_fn in enumerate(gp_fn_list):
             gp_fn.__name__ = 'gp_loss_' + str(i)
         
