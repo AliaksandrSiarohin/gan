@@ -6,7 +6,7 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.merge import Add
 from keras.layers.pooling import AveragePooling2D
 from keras import backend as K
-from keras.engine.topology import Layer, InputSpec
+from keras.engine.topology import Layer
 from keras import initializers
 from keras.backend import tf as ktf
 

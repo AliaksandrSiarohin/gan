@@ -37,7 +37,7 @@ class UGANDataset(object):
         batch = output_batch
         height, width = batch.shape[1], batch.shape[2]
         total_width, total_height = width * col, height * row
-        result_image = np.empty((total_height, total_width, batch.shape[3]))
+        result_image = np.empty((total_height, total_width, batch.shape[3]), dtype=output_batch.dtype)
         batch_index = 0
         for i in range(row):
             for j in range(col):
