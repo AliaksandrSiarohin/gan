@@ -1,8 +1,6 @@
-from keras.models import Sequential, Model
-from keras.layers import Dense, Reshape, Flatten, Activation, Input, Lambda
+from keras.layers import Activation
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers.normalization import BatchNormalization
-from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.merge import Add
 from keras.layers.pooling import AveragePooling2D
 from keras import backend as K
@@ -10,7 +8,21 @@ from keras.engine.topology import Layer
 from keras import initializers
 from keras.backend import tf as ktf
 
-import numpy as np
+def jacobian(y_flat, x):
+    n = y_flat.shape[0]
+
+    loop_vars = [
+        ktf.constant(0, ktf.int32),
+        ktf.TensorArray(ktf.float32, size=n),
+    ]
+
+    _, jacobian = ktf.while_loop(
+        lambda j, _: j < n,
+        lambda j, result: (j+1, result.write(j, ktf.gradients(y_flat[j], x))),
+        loop_vars)
+
+    return jacobian.stack()
+
 
 class LayerNorm(Layer):
     def __init__(self, epsilon=1e-7, beta_init='zero', gamma_init='one', **kwargs):

@@ -9,9 +9,9 @@ from tqdm import tqdm
 
 class Trainer(object):
     def __init__(self, dataset, gan, output_dir = 'output/generated_samples',
-                 checkpoints_dir = 'output/checkpoints', training_ration = 5,
-                 display_ratio = 1, checkpoint_ratio = 10, start_epoch=0, 
-                 number_of_epochs = 100, batch_size = 64, **kwargs):
+                 checkpoints_dir='output/checkpoints', training_ration=5,
+                 display_ratio=1, checkpoint_ratio=10, start_epoch=0,
+                 number_of_epochs=100, batch_size=64, **kwargs):
         self.dataset = dataset
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs

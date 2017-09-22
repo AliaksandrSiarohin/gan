@@ -4,7 +4,7 @@ from keras.layers.convolutional import Convolution2D, Conv2DTranspose
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 
-from wgan_gp import WGAN_GP
+from lsgan import LSGAN
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
 from train import Trainer
@@ -55,6 +55,8 @@ def make_discriminator():
     model.add(Dense(1024, kernel_initializer='he_normal'))
     model.add(LeakyReLU())
     model.add(Dense(1, kernel_initializer='he_normal'))
+    #model.add(Activation('sigmoid'))
+
     return model
 
 class MNISTDataset(ArrayDataset):
@@ -73,14 +75,15 @@ class MNISTDataset(ArrayDataset):
         image = np.squeeze(np.round(image).astype(np.uint8))
         return image
 
+
 def main():
     generator = make_generator()
     discriminator = make_discriminator()
-    
+
     args = parser_with_default_args().parse_args()
     dataset = MNISTDataset(args.batch_size)
-    gan = WGAN_GP('output/checkpoints/epoch_019_generator.png',
-                  'output/checkpoints/epoch_019_discriminator.png', **vars(args))
+    gan = LSGAN(generator,
+                  discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
     
     trainer.train()

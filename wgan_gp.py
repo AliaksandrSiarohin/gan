@@ -1,40 +1,32 @@
 from keras import backend as K
 from keras.optimizers import Adam
-from gan import GAN
+from wgan import WGAN
 
-class WGAN_GP(GAN):
+class WGAN_GP(WGAN):
     """
         Class for representing WGAN_GP (https://arxiv.org/abs/1704.00028)
     """
     def __init__(self, generator, discriminator,
                        gradient_penalty_weight = 10,
+                       generator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
+                       discriminator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
                        **kwargs):
-        super(WGAN_GP, self).__init__(generator, discriminator, **kwargs)
+        super(WGAN, self).__init__(generator, discriminator, generator_optimizer=generator_optimizer,
+                                      discriminator_optimizer = discriminator_optimizer, **kwargs)
         self._gradient_penalty_weight = gradient_penalty_weight
         
         self.generator_metric_names = []
         self.discriminator_metric_names = ['gp_loss_' + str(i) for i in range(len(self._discriminator_input))] + ['true', 'fake']
 
-    
-    def _compile_generator_loss(self):
-        def generator_wasserstein_loss(y_true, y_pred):
-            return -K.mean(y_pred)
-        return generator_wasserstein_loss, []
-    
     def _compile_discriminator_loss(self):        
-        def true_loss(y_true, y_pred):
-            y_true = y_pred[:self._batch_size]
-            return -K.mean(y_true)
-            
-        def fake_loss(y_true, y_pred):
-            y_fake = y_pred[self._batch_size:]
-            return K.mean(y_fake)
-                
+        _, metrics = super(WGAN_GP, self)._compile_discriminator_loss()
+        true_loss, fake_loss = metrics
+
         real = self._discriminator_input
         fake = self._discriminator_fake_input
         weights = K.random_uniform((self._batch_size, 1, 1, 1))
         averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
-        
+
         gp_list = []
         for averaged_samples_part in averaged_samples:
             gradients = K.gradients(K.sum(self._discriminator(averaged_samples)), averaged_samples_part)[0]

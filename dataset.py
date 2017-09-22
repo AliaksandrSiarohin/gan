@@ -1,12 +1,11 @@
 import numpy as np
 import os
-
 import matplotlib
 matplotlib.use('Agg')
 import pylab as plt
-
 from skimage.transform import resize
 from skimage import img_as_ubyte
+
 
 class UGANDataset(object):
     def __init__(self, batch_size, noise_size):
@@ -19,10 +18,10 @@ class UGANDataset(object):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size)]
     
     def _load_discriminator_data(self, index):
-        None
+        assert False, "Should be implimented in subclasses"
     
     def _shuffle_discriminator_data(self):
-        None
+        assert False, "Should be implimented in subclasses"
 
     def next_discriminator_sample(self):
         self._current_batch %= self._batches_before_shuffle
