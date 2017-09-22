@@ -8,6 +8,7 @@ from keras.engine.topology import Layer
 from keras import initializers
 from keras.backend import tf as ktf
 
+
 def jacobian(y_flat, x):
     n = y_flat.shape[0]
 
@@ -59,7 +60,7 @@ class LayerNorm(Layer):
 
 def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
     assert resample in ["UP", "SAME", "DOWN"]
-   
+
     if resample == "UP":
         shortcut = UpSampling2D(size=(2, 2)) (x)        
         shortcut = Conv2D(nfilters, kernel_size, padding = 'same',
@@ -69,11 +70,11 @@ def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
         convpath = Activation('relu') (convpath)
         convpath = UpSampling2D(size=(2, 2))(convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
-                                 use_bias = False, padding='same')(convpath)        
+                                      use_bias = False, padding='same')(convpath)
         convpath = norm() (convpath)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
-                                 use_bias = True, padding='same') (convpath)
+                                     use_bias = True, padding='same') (convpath)
         
         y = Add() ([shortcut, convpath])
     elif resample == "SAME":      
