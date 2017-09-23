@@ -79,7 +79,7 @@ class FolderDataset(UGANDataset):
         np.random.shuffle(self._image_names)
         
     def display(self, output_batch, input_batch = None, row=8, col=8):
-        image = super(FolderDataset, self).display(output_batch, row, col)
+        image = super(FolderDataset, self).display(output_batch, row=row, col=col)
         return self._deprocess_image(image)
     
     
