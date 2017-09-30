@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 class Trainer(object):
     def __init__(self, dataset, gan, output_dir = 'output/generated_samples',
-                 checkpoints_dir='output/checkpoints', training_ration=5,
+                 checkpoints_dir='output/checkpoints', training_ratio=5,
                  display_ratio=1, checkpoint_ratio=10, start_epoch=0,
                  number_of_epochs=100, batch_size=64, **kwargs):
         self.dataset = dataset
@@ -26,7 +26,7 @@ class Trainer(object):
         self.batch_size = batch_size        
         self.output_dir = output_dir
         self.checkpoints_dir = checkpoints_dir
-        self.training_ratio = training_ration
+        self.training_ratio = training_ratio
         self.display_ratio = display_ratio
         self.checkpoint_ratio = checkpoint_ratio
         
@@ -75,9 +75,10 @@ class Trainer(object):
         
     def train(self):
         while (self.current_epoch < self.last_epoch):
-            self.train_one_epoch()
+            
             if (self.current_epoch + 1) % self.display_ratio == 0:
                 self.save_generated_images()
             if (self.current_epoch + 1) % self.checkpoint_ratio == 0:
                 self.make_checkpoint()
+            self.train_one_epoch()
             self.current_epoch += 1
