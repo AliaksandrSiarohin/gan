@@ -5,6 +5,11 @@ matplotlib.use('Agg')
 import pylab as plt
 import keras.backend as K
 assert K.image_data_format() == 'channels_last', "Backend should be tensorflow and data_format channel_last"
+from keras.backend import tf as ktf
+config = ktf.ConfigProto()
+config.gpu_options.allow_growth = True
+session = ktf.Session(config=config)
+K.set_session(session)
 from tqdm import tqdm
 
 class Trainer(object):
