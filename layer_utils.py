@@ -4,7 +4,7 @@ from keras.layers.normalization import BatchNormalization
 from keras.layers.merge import Add
 from keras.layers.pooling import AveragePooling2D
 from keras.backend import tf as ktf
-
+from keras.engine.topology import Layer
 
 def jacobian(y_flat, x):
     n = y_flat.shape[0]
@@ -22,7 +22,41 @@ def jacobian(y_flat, x):
     return jacobian.stack()
 
 
-def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization):
+class GaussianFromPointsLayer(Layer):
+    def __init__(self, sigma=6, image_size=(128, 64), **kwargs):
+        self.sigma = sigma
+        self.image_size = image_size
+        super(GaussianFromPointsLayer, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.xx, self.yy = ktf.meshgrid(ktf.range(self.image_size[1]),
+                                        ktf.range(self.image_size[0]))
+        self.xx = ktf.expand_dims(ktf.cast(self.xx, 'float32'), 2)
+        self.yy = ktf.expand_dims(ktf.cast(self.yy, 'float32'), 2)
+
+    def call(self, x, mask=None):
+        def batch_map(cords):
+            y = ((cords[..., 0] + 1.0) / 2.0) * self.image_size[0]
+            x = ((cords[..., 1] + 1.0) / 2.0) * self.image_size[1]
+            y = ktf.reshape(y, (1, 1, -1))
+            x = ktf.reshape(x, (1, 1, -1))
+            return ktf.exp(-((self.yy - y) ** 2 + (self.xx - x) ** 2) / (2 * self.sigma ** 2))
+
+        x = ktf.map_fn(batch_map, x, dtype='float32')
+        print (x.shape)
+        return x
+
+    def compute_output_shape(self, input_shape):
+        print (input_shape)
+        return tuple([input_shape[0], self.image_size[0], self.image_size[1], input_shape[1]])
+
+    def get_config(self):
+        config = {"sigma": self.sigma, "image_size": self.image_size}
+        base_config = super(GaussianFromPointsLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+    
+
+def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
     assert resample in ["UP", "SAME", "DOWN"]
 
     if resample == "UP":

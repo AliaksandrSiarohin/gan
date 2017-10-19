@@ -4,3 +4,5 @@ import dataset
 import train
 import cmd
 import layer_utils
+import wgan
+import lsgan
