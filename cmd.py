@@ -18,7 +18,7 @@ def parser_with_default_args():
     parser.add_argument("--generator_checkpoint", default=None, help="Previosly saved model of generator")
     parser.add_argument("--discriminator_checkpoint", default=None, help="Previosly saved model of discriminator")
     
-    parser.add_argument("--input_folder", default='../market-dataset/bounding_box_train', help='Folder with real images for training')
+    parser.add_argument("--input_dir", default='../market-dataset/bounding_box_train', help='Folder with real images for training')
 
     parser.add_argument("--display_ratio", default=1, type=int,  help='Number of epochs between ploting')
     parser.add_argument("--start_epoch", default=0, type=int, help='Start epoch for starting from checkpoint')
