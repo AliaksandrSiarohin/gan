@@ -1,4 +1,5 @@
 import argparse
+from ast import literal_eval as make_tuple
 
 def parser_with_default_args():
     """
@@ -22,5 +23,5 @@ def parser_with_default_args():
 
     parser.add_argument("--display_ratio", default=1, type=int,  help='Number of epochs between ploting')
     parser.add_argument("--start_epoch", default=0, type=int, help='Start epoch for starting from checkpoint')
-    
+
     return parser

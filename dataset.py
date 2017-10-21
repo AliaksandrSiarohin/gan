@@ -13,7 +13,10 @@ class UGANDataset(object):
         self._noise_size = noise_size
         self._batches_before_shuffle = 1000
         self._current_batch = 0
-        
+
+    def number_of_batches_per_epoch(self):
+        return self._batches_before_shuffle
+
     def next_generator_sample(self):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size)]
     
