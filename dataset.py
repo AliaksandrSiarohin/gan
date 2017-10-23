@@ -11,7 +11,7 @@ class UGANDataset(object):
     def __init__(self, batch_size, noise_size):
         self._batch_size = batch_size
         self._noise_size = noise_size
-        self._batches_before_shuffle = 1000
+        self._batches_before_shuffle = 0
         self._current_batch = 0
 
     def number_of_batches_per_epoch(self):
@@ -22,16 +22,20 @@ class UGANDataset(object):
     
     def _load_discriminator_data(self, index):
         assert False, "Should be implimented in subclasses"
-    
-    def _shuffle_discriminator_data(self):
+
+    def _shuffle_data(self):
         assert False, "Should be implimented in subclasses"
 
-    def next_discriminator_sample(self):
+    def _next_data_index(self):
         self._current_batch %= self._batches_before_shuffle
         if self._current_batch == 0:
-            self._shuffle_discriminator_data()
+            self._shuffle_data()
         index = np.arange(self._current_batch * self._batch_size, (self._current_batch + 1) * self._batch_size)
         self._current_batch += 1
+        return index
+
+    def next_discriminator_sample(self):
+        index = self._next_data_index()
         image_batch = self._load_discriminator_data(index)
         return image_batch        
 
@@ -57,7 +61,7 @@ class ArrayDataset(UGANDataset):
     def _load_discriminator_data(self, index):
         return [self._X[index]]
     
-    def _shuffle_discriminator_data(self):
+    def _shuffle_data(self):
         np.random.shuffle(self._X)
     
 class FolderDataset(UGANDataset):
@@ -78,7 +82,7 @@ class FolderDataset(UGANDataset):
         return [np.array([self._preprocess_image(plt.imread(os.path.join(self._input_dir, img_name)))
                           for img_name in self._image_names[index]])]
     
-    def _shuffle_discriminator_data(self):
+    def _shuffle_data(self):
         np.random.shuffle(self._image_names)
         
     def display(self, output_batch, input_batch = None, row=8, col=8):

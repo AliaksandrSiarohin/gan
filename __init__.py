@@ -6,3 +6,5 @@ import cmd
 import layer_utils
 import wgan
 import lsgan
+import test
+import inception_score
