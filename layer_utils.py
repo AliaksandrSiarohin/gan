@@ -1,10 +1,13 @@
-from keras.layers import Activation
+from keras.layers import Activation, Lambda
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers.normalization import BatchNormalization
 from keras.layers.merge import Add
 from keras.layers.pooling import AveragePooling2D
 from keras.backend import tf as ktf
 from keras.engine.topology import Layer
+from keras.models import Input, Model
+
+import numpy as np
 
 def jacobian(y_flat, x):
     n = y_flat.shape[0]
@@ -20,6 +23,26 @@ def jacobian(y_flat, x):
         loop_vars)
 
     return jacobian.stack()
+
+
+def content_features_model(image_size, layer_name='block4_conv1'):
+    from keras.applications import vgg19
+    x = Input(list(image_size) + [3])
+    def preprocess_for_vgg(x):
+        x = 255 * (x + 1) / 2
+        mean = np.array([103.939, 116.779, 123.68])
+        mean = mean.reshape((1, 1, 1, 3))
+        x = x - mean
+        x = x[..., ::-1]
+        return x
+
+    x = Input((128, 64, 3))
+    y = Lambda(preprocess_for_vgg)(x)
+    vgg = vgg19.VGG19(weights='imagenet', include_top=False, input_tensor=y)
+    outputs_dict = dict([(layer.name, layer.output) for layer in vgg.layers])
+    y = outputs_dict[layer_name]
+    return Model(inputs=x, outputs=y)
+
 
 
 class GaussianFromPointsLayer(Layer):
