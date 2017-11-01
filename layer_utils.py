@@ -40,7 +40,10 @@ def content_features_model(image_size, layer_name='block4_conv1'):
     y = Lambda(preprocess_for_vgg)(x)
     vgg = vgg19.VGG19(weights='imagenet', include_top=False, input_tensor=y)
     outputs_dict = dict([(layer.name, layer.output) for layer in vgg.layers])
-    y = outputs_dict[layer_name]
+    if type(layer_name) == list:
+        y = [outputs_dict[ln] for ln in layer_name]
+    else:
+        y = outputs_dict[layer_name]
     return Model(inputs=x, outputs=y)
 
 
