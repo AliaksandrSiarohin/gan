@@ -38,7 +38,10 @@ class Trainer(object):
         
         
     def save_generated_images(self):
-        batch = self.dataset.next_generator_sample() 
+        if self.use_validation:
+            batch = self.dataset.next_generator_sample_validation()
+        else:
+            batch = self.dataset.next_generator_sample() 
         image = self.dataset.display(self.generator.predict_on_batch(batch), batch)
         title = "epoch_{}.png".format(str(self.current_epoch).zfill(3))
         if not os.path.exists(self.output_dir):
