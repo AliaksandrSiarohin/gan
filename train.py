@@ -69,7 +69,7 @@ class Trainer(object):
         loss = self.generator_model.train_on_batch(generator_batch, np.zeros([self.batch_size]))
         generator_loss_list.append(loss)
     
-    def train_one_epoch(self):
+    def train_one_epoch(self, validation_epoch=False):
         print("Epoch: %i" % self.current_epoch)
         discriminator_loss_list = []
         generator_loss_list = []
@@ -78,29 +78,28 @@ class Trainer(object):
         for _ in tqdm(range(int(self.dataset.number_of_batches_per_epoch()))):
             self.train_one_step(discriminator_loss_list, generator_loss_list)
 
-        print ("Validation...")
-        if self.use_validation:
-            validation_loss_list = []
-            for _ in tqdm(range(int(self.dataset.number_of_batches_per_validation()))):
-                generator_batch = self.dataset.next_generator_sample_validation()
-                loss = self.generator_model.test_on_batch(generator_batch, np.zeros([self.batch_size]))
-                validation_loss_list.append(loss)
-            val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis = 0),
-                                                                  np.mean(np.array(discriminator_loss_list), axis = 0))
-            
+       
         g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
                                                                np.mean(np.array(discriminator_loss_list), axis = 0))        
         print (g_loss_str)
         print (d_loss_str)
-        if self.use_validation:
+        
+        if self.use_validation and validation_epoch:
+            print ("Validation...")
+            validation_loss_list = []
+            for _ in tqdm(range(int(self.dataset.number_of_batches_per_validation()))):
+                    generator_batch = self.dataset.next_generator_sample_validation()
+                    loss = self.generator_model.test_on_batch(generator_batch, np.zeros([self.batch_size]))
+                    validation_loss_list.append(loss)
+            val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis = 0),
+                                                                      np.mean(np.array(discriminator_loss_list), axis = 0))
             print (val_loss_str.replace('Generator loss', 'Validation loss'))
         
     def train(self):
-        while (self.current_epoch < self.last_epoch):
-            
+        while (self.current_epoch < self.last_epoch):            
             if (self.current_epoch + 1) % self.display_ratio == 0:
                 self.save_generated_images()
             if (self.current_epoch + 1) % self.checkpoint_ratio == 0:
-                self.make_checkpoint()
-            self.train_one_epoch()
+                self.make_checkpoint()     
+            self.train_one_epoch((((self.current_epoch + 1) % self.checkpoint_ratio == 0) or self.current_epoch==0))
             self.current_epoch += 1
