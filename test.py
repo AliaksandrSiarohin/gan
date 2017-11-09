@@ -8,12 +8,14 @@ config = ktf.ConfigProto()
 config.gpu_options.allow_growth = True
 session = ktf.Session(config=config)
 K.set_session(session)
+K.set_learning_phase(1)
 
 def deprocess_image(img):
     return (255 * ((img + 1) / 2.0)).astype(np.uint8)
 
 def generate_images(dataset, generator,  number_of_samples, out_index=-1, deprocess_fn=deprocess_image):
     result = []
+
     for _ in tqdm(range(number_of_samples)):
         out = generator.predict(dataset.next_generator_sample())
         result.append(deprocess_fn(out[out_index]))
