@@ -8,7 +8,6 @@ config = ktf.ConfigProto()
 config.gpu_options.allow_growth = True
 session = ktf.Session(config=config)
 K.set_session(session)
-K.set_learning_phase(1)
 
 def deprocess_image(img):
     return (255 * ((img + 1) / 2.0)).astype(np.uint8)

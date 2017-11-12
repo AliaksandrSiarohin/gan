@@ -75,7 +75,10 @@ class Trainer(object):
 
         
         for _ in tqdm(range(int(self.dataset.number_of_batches_per_epoch()))):
-            self.train_one_step(discriminator_loss_list, generator_loss_list)
+            try:
+                self.train_one_step(discriminator_loss_list, generator_loss_list)
+            except ktf.errors.InvalidArgumentError as err:
+                print (err)
 
        
         g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
