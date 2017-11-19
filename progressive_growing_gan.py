@@ -1,0 +1,318 @@
+from keras.models import Model, Input
+from keras.layers import Conv2D, LeakyReLU, Activation, Reshape, UpSampling2D, Dense, Flatten, AveragePooling2D, GlobalAveragePooling2D
+from keras.backend import tf as ktf
+from keras.engine.topology import Layer
+import keras.backend as K
+from keras.layers.merge import Add
+from keras import initializers
+
+import numpy as np
+
+from cmd import parser_with_default_args
+from dataset import UGANDataset
+from wgan_gp import WGAN_GP
+from train import Trainer
+from functools import partial
+
+
+iter_count = K.variable(0, name='iter_count', dtype='int32')
+block_filter_size = [512, 512, 512, 512, 256, 128, 64, 32, 16]
+
+class ProgresiveGrowingG(Layer):
+    def __init__(self, n_iters_per_stage, final_size, kernel_initializer='glorot_uniform',
+                                bias_initializer='zeros', **kwargs):
+        self.n_iters_per_stage = n_iters_per_stage
+        self.final_size = final_size
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        super(ProgresiveGrowingG, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.noise_size = input_shape[1]
+        self.resize_fn = lambda x: K.resize_images(x, 2, 2, "channels_last")
+        exp_number_of_blocks = min(self.final_size) / 4
+        ch = self.noise_size / (self.final_size[0] * self.final_size[1] / (exp_number_of_blocks **2))
+
+        self.input_resized_shape = (-1, self.final_size[0] / exp_number_of_blocks,
+                                    self.final_size[1] / exp_number_of_blocks, ch)
+
+        number_of_blocks = exp_number_of_blocks.bit_length()
+        self.number_of_blocks = number_of_blocks
+
+        self.first_conv_params = []
+        self.second_conv_params = []
+        self.to_rgb_conv_params = []
+
+        for i in range(number_of_blocks):
+            kernel_shape = [4, 4] if i == 0 else [3, 3]
+            kernel_shape += [ch, block_filter_size[i]]
+
+            kernel = self.add_weight("block%s_conv0_kernel" % i, tuple(kernel_shape),
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_conv0_bias" % i, (block_filter_size[i],),
+                                      initializer=self.kernel_initializer)
+
+            self.first_conv_params.append((kernel, bias))
+            ch = block_filter_size[i]
+
+        for i in range(number_of_blocks):
+            kernel = self.add_weight("block%s_conv1_kernel" % i, [3, 3, block_filter_size[i], block_filter_size[i]],
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_conv1_bias" % i, (block_filter_size[i],),
+                                      initializer=self.kernel_initializer)
+
+            self.second_conv_params.append((kernel, bias))
+
+        for i in range(number_of_blocks):
+            kernel = self.add_weight("block%s_torgb_kernel" % i, [1, 1, block_filter_size[i], 3],
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_torgb_bias" % i, (3,),
+                                      initializer=self.kernel_initializer)
+
+            self.to_rgb_conv_params.append((kernel, bias))
+
+        super(ProgresiveGrowingG, self).build(input_shape)
+
+    def call(self, inputs, **kwargs):
+        stage_number = iter_count / self.n_iters_per_stage
+        alpha = K.cast(iter_count, 'float32') / float(self.n_iters_per_stage)
+        alpha -= K.cast(stage_number, 'float32')
+
+        def apply_conv(out, params, activation):
+            assert activation in ['relu', 'tanh']
+            out = K.conv2d(out, params[0], padding='same')
+            out = K.bias_add(out, params[1])
+            if activation == 'relu':
+                out = K.relu(out, alpha=0.2)
+            else:
+                out = K.tanh(out)
+            return out
+
+        def output_for_stage(stage_number_int):
+            out = inputs
+            out = K.reshape(out, self.input_resized_shape)
+            for block_index in range(stage_number_int / 2 + 1):
+                if block_index != 0:
+                    out = self.resize_fn(out)
+                out = apply_conv(out, self.first_conv_params[block_index], 'relu')
+                out = apply_conv(out, self.second_conv_params[block_index], 'relu')
+            torgb1 = apply_conv(out, self.to_rgb_conv_params[stage_number_int / 2], 'tanh')
+
+            if stage_number_int % 2 != 0:
+                out = self.resize_fn(out)
+                torgb1 = self.resize_fn(torgb1)
+                out = apply_conv(out, self.first_conv_params[stage_number_int / 2 + 1], 'relu')
+                out = apply_conv(out, self.second_conv_params[stage_number_int / 2 + 1], 'relu')
+                torgb2 = apply_conv(out, self.to_rgb_conv_params[stage_number_int / 2 + 1], 'tanh')
+
+                return (1 - alpha) * torgb1 + alpha * torgb2
+            else:
+                return torgb1
+
+        pairs = []
+        for i in range(2 * self.number_of_blocks - 1):
+            pairs.append( (ktf.equal(stage_number, i), partial(output_for_stage, stage_number_int=i)))
+
+        return ktf.case(pairs, default=lambda: output_for_stage(2 * self.number_of_blocks - 2))
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], None, None, 3)
+
+
+    def get_config(self):
+        config = {'n_iters_per_stage': self.n_iters_per_stage,
+                  'final_size': self.final_size}
+        base_config = super(ProgresiveGrowingG, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class ProgresiveGrowingD(Layer):
+    def __init__(self, n_iters_per_stage, final_size, kernel_initializer='glorot_uniform',
+                                bias_initializer='zeros', **kwargs):
+        self.n_iters_per_stage = n_iters_per_stage
+        self.final_size = final_size
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        super(ProgresiveGrowingD, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.resize_fn = lambda x: K.pool2d(x, (2, 2), data_format="channels_last", pool_mode='avg', padding='same')
+        number_of_blocks = min(self.final_size) / 4
+
+        number_of_blocks = number_of_blocks.bit_length()
+        self.number_of_blocks = number_of_blocks
+
+        self.first_conv_params = []
+        self.second_conv_params = []
+        self.from_rgb_conv_params = []
+
+        for i in range(number_of_blocks):
+            ch_from = block_filter_size[i + 1]
+            ch_to = block_filter_size[i]
+            kernel = self.add_weight("block%s_conv0_kernel" % i, [3, 3, ch_from, ch_to],
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_conv0_bias" % i, (block_filter_size[i],),
+                                      initializer=self.kernel_initializer)
+
+            self.first_conv_params.append((kernel, bias))
+
+
+        for i in range(number_of_blocks):
+            kernel_shape = [4, 4] if i == 0 else [3, 3]
+            kernel_shape += [block_filter_size[i], block_filter_size[i]]
+
+            kernel = self.add_weight("block%s_conv1_kernel" % i, tuple(kernel_shape),
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_conv1_bias" % i, (block_filter_size[i],),
+                                      initializer=self.kernel_initializer)
+
+            self.second_conv_params.append((kernel, bias))
+
+        for i in range(number_of_blocks):
+            kernel = self.add_weight("block%s_fromrgb_kernel" % i, [1, 1, 3, block_filter_size[i + 1]],
+                                      initializer=self.kernel_initializer)
+            bias = self.add_weight("block%s_fromrgb_bias" % i, (block_filter_size[i + 1],),
+                                      initializer=self.kernel_initializer)
+
+            self.from_rgb_conv_params.append((kernel, bias))
+
+        self.units_in_final_layer = (block_filter_size[0] * (self.final_size[0] * self.final_size[1])
+                                                                            / (min(self.final_size) ** 2))
+
+        self.dense = self.add_weight('fc', (self.units_in_final_layer, 1), initializer=self.kernel_initializer)
+
+        super(ProgresiveGrowingD, self).build(input_shape)
+
+    def call(self, inputs, **kwargs):
+        stage_number = iter_count / self.n_iters_per_stage
+        alpha = K.cast(iter_count, 'float32') / float(self.n_iters_per_stage)
+        alpha -= K.cast(stage_number, 'float32')
+
+        def apply_conv(out, params, activation, pad='same'):
+            assert activation in ['relu', 'tanh']
+            out = K.conv2d(out, params[0], padding=pad)
+            out = K.bias_add(out, params[1])
+            if activation == 'relu':
+                out = K.relu(out, alpha=0.2)
+            else:
+                out = K.tanh(out)
+            return out
+
+        def output_for_stage(stage_number_int):
+            out = inputs
+            if stage_number_int % 2 != 0:
+                out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2 + 1], 'relu')
+                out = apply_conv(out, self.first_conv_params[stage_number_int / 2 + 1], 'relu')
+                out = apply_conv(out, self.second_conv_params[stage_number_int / 2 + 1], 'relu')
+
+                out = self.resize_fn(out)
+                fromrgb = self.resize_fn(inputs)
+                fromrgb = apply_conv(fromrgb, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
+                out = (1 - alpha) * fromrgb + alpha * out
+            else:
+                out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
+
+            for block_index in range(stage_number_int / 2, -1, -1):
+                out = apply_conv(out, self.first_conv_params[block_index], 'relu')
+                if block_index != 0:
+                    out = apply_conv(out, self.second_conv_params[block_index], 'relu')
+                else:
+                    out = apply_conv(out, self.second_conv_params[block_index], 'relu', 'valid')
+
+            out = K.reshape(out, (-1, self.units_in_final_layer))
+            return K.dot(out, self.dense)
+
+        pairs = []
+        for i in range(2 * self.number_of_blocks - 1):
+            pairs.append( (ktf.equal(stage_number, i), partial(output_for_stage, stage_number_int=i)))
+
+        return ktf.case(pairs, default=lambda: output_for_stage(2 * self.number_of_blocks - 2))
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], 1)
+
+
+    def get_config(self):
+        config = {'n_iters_per_stage': self.n_iters_per_stage,
+                  'final_size': self.final_size}
+        base_config = super(ProgresiveGrowingD, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+
+def make_generator(noise_size, final_size, n_iters_per_stage):
+    inp = Input((noise_size, ))
+    out = ProgresiveGrowingG(n_iters_per_stage, final_size)(inp)
+    return Model(inp, out)
+
+def make_discriminator(final_size, n_iters_per_stage):
+    inp = Input((None, None, 3))
+    out = ProgresiveGrowingD(n_iters_per_stage, final_size)(inp)
+    return Model(inp, out)
+
+
+import os
+from skimage.transform import resize
+from skimage import img_as_ubyte
+from skimage.io import imread
+
+class FolderDataset(UGANDataset):
+    def __init__(self, input_dir, batch_size, noise_size, image_size, iters_per_stage):
+        super(FolderDataset, self).__init__(batch_size, noise_size)
+        self._image_names = np.array(os.listdir(input_dir))
+        self._input_dir = input_dir
+        self._image_size = image_size
+        self._iters_per_stage = iters_per_stage
+        self._batches_before_shuffle = int(self._image_names.shape[0] // self._batch_size)
+        self._iter_count = 0
+
+    def _preprocess_image(self, img):
+        stage_number = self._iter_count / self._iters_per_stage
+        resolution = stage_number / 2
+        blocks = min(self._image_size).bit_length() - 3
+        image_size = (self._image_size[0] / (2 ** (blocks - resolution)),
+                      self._image_size[1] / (2 ** (blocks - resolution)))
+        print (image_size)
+        return resize(img, image_size) * 2 - 1
+
+    def _deprocess_image(self, img):
+        return img_as_ubyte((img + 1) / 2)
+
+    def _load_discriminator_data(self, index):
+        self._iter_count += self._batch_size
+        K.set_value(iter_count, self._iter_count)
+        data = [np.array([self._preprocess_image(imread(os.path.join(self._input_dir, img_name)))
+                          for img_name in self._image_names[index]])]
+        return data
+
+    def _shuffle_data(self):
+        np.random.shuffle(self._image_names)
+
+    def display(self, output_batch, input_batch = None):
+        image = super(FolderDataset, self).display(output_batch)
+        return self._deprocess_image(image)
+
+def main():
+    from keras.utils import plot_model
+
+    generator = make_generator(512, (128, 64), n_iters_per_stage=10)
+
+    discriminator = make_discriminator((128, 64), n_iters_per_stage=10)
+    plot_model(discriminator, to_file='model.png')
+
+    args = parser_with_default_args().parse_args()
+    args.input_folder = '/home/gin/pose-gan/data_old/market-dataset/train'
+    args.batch_size = 4
+
+
+    dataset = FolderDataset(args.input_folder, args.batch_size, (512, ), (128, 64), iters_per_stage = 10)
+    gan = WGAN_GP(generator, discriminator, **vars(args))
+    trainer = Trainer(dataset, gan, **vars(args))
+
+    trainer.train()
+
+if __name__ == "__main__":
+    main()
+
+
+

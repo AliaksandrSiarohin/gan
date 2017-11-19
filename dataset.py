@@ -39,7 +39,10 @@ class UGANDataset(object):
         image_batch = self._load_discriminator_data(index)
         return image_batch        
 
-    def display(self, output_batch, input_batch = None, row=8, col=8):
+    def display(self, output_batch, input_batch = None):
+        print (output_batch.shape)
+        row = self._batch_size
+        col = 1
         batch = output_batch
         height, width = batch.shape[1], batch.shape[2]
         total_width, total_height = width * col, height * row
@@ -85,8 +88,8 @@ class FolderDataset(UGANDataset):
     def _shuffle_data(self):
         np.random.shuffle(self._image_names)
         
-    def display(self, output_batch, input_batch = None, row=8, col=8):
-        image = super(FolderDataset, self).display(output_batch, row=row, col=col)
+    def display(self, output_batch, input_batch = None):
+        image = super(FolderDataset, self).display(output_batch)
         return self._deprocess_image(image)
     
     
