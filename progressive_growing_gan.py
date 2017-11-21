@@ -268,11 +268,11 @@ class FolderDataset(UGANDataset):
 
     def _preprocess_image(self, img):
         stage_number = self._iter_count / self._iters_per_stage
-        resolution = stage_number / 2
+        resolution = (stage_number + 1) / 2
         blocks = min(self._image_size).bit_length() - 3
         image_size = (self._image_size[0] / (2 ** (blocks - resolution)),
                       self._image_size[1] / (2 ** (blocks - resolution)))
-        print (image_size)
+	image_size = min(self._image_size[0], image_size[0]), min(self._image_size[1], image_size[1])
         return resize(img, image_size) * 2 - 1
 
     def _deprocess_image(self, img):
@@ -294,18 +294,17 @@ class FolderDataset(UGANDataset):
 
 def main():
     from keras.utils import plot_model
+    n_iters_per_stage = int(6e5)
+    generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
-    generator = make_generator(512, (128, 64), n_iters_per_stage=10)
-
-    discriminator = make_discriminator((128, 64), n_iters_per_stage=10)
-    plot_model(discriminator, to_file='model.png')
+    discriminator = make_discriminator((128, 64), n_iters_per_stage=n_iters_per_stage)
 
     args = parser_with_default_args().parse_args()
-    args.input_folder = '/home/gin/pose-gan/data_old/market-dataset/train'
-    args.batch_size = 4
+    args.input_folder = '../pose-gan/data/market-dataset/train'
+    args.batch_size = 16
 
 
-    dataset = FolderDataset(args.input_folder, args.batch_size, (512, ), (128, 64), iters_per_stage = 10)
+    dataset = FolderDataset(args.input_folder, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
     gan = WGAN_GP(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
 
