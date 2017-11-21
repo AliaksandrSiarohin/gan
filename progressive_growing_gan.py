@@ -1,5 +1,5 @@
 from keras.models import Model, Input
-from keras.layers import Conv2D, LeakyReLU, Activation, Reshape, UpSampling2D, Dense, Flatten, AveragePooling2D, GlobalAveragePooling2D
+from keras.layers import Conv2D, LeakyReLU, Activation, Reshape, UpSampling2D, Dense, Flatten, AveragePooling2D, GlobalAveragePooling2D, Lambda
 from keras.backend import tf as ktf
 from keras.engine.topology import Layer
 import keras.backend as K
@@ -137,10 +137,13 @@ class ProgresiveGrowingD(Layer):
 
     def build(self, input_shape):
         self.resize_fn = lambda x: K.pool2d(x, (2, 2), data_format="channels_last", pool_mode='avg', padding='same')
-        number_of_blocks = min(self.final_size) / 4
+        exp_number_of_blocks = min(self.final_size) / 4
 
-        number_of_blocks = number_of_blocks.bit_length()
+        number_of_blocks = exp_number_of_blocks.bit_length()
         self.number_of_blocks = number_of_blocks
+
+        self.final_filter_size = [self.final_size[0] / exp_number_of_blocks,
+                                    self.final_size[1] / exp_number_of_blocks]
 
         self.first_conv_params = []
         self.second_conv_params = []
@@ -158,7 +161,7 @@ class ProgresiveGrowingD(Layer):
 
 
         for i in range(number_of_blocks):
-            kernel_shape = [4, 4] if i == 0 else [3, 3]
+            kernel_shape = self.final_filter_size if i == 0 else [3, 3]
             kernel_shape += [block_filter_size[i], block_filter_size[i]]
 
             kernel = self.add_weight("block%s_conv1_kernel" % i, tuple(kernel_shape),
@@ -176,10 +179,7 @@ class ProgresiveGrowingD(Layer):
 
             self.from_rgb_conv_params.append((kernel, bias))
 
-        self.units_in_final_layer = (block_filter_size[0] * (self.final_size[0] * self.final_size[1])
-                                                                            / (min(self.final_size) ** 2))
-
-        self.dense = self.add_weight('fc', (self.units_in_final_layer, 1), initializer=self.kernel_initializer)
+        self.dense = self.add_weight('fc', (block_filter_size[0], 1), initializer=self.kernel_initializer)
 
         super(ProgresiveGrowingD, self).build(input_shape)
 
@@ -200,26 +200,29 @@ class ProgresiveGrowingD(Layer):
 
         def output_for_stage(stage_number_int):
             out = inputs
+            print "Stage number %s" % stage_number_int
             if stage_number_int % 2 != 0:
                 out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2 + 1], 'relu')
                 out = apply_conv(out, self.first_conv_params[stage_number_int / 2 + 1], 'relu')
                 out = apply_conv(out, self.second_conv_params[stage_number_int / 2 + 1], 'relu')
-
+                print K.int_shape(out)
                 out = self.resize_fn(out)
                 fromrgb = self.resize_fn(inputs)
                 fromrgb = apply_conv(fromrgb, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
                 out = (1 - alpha) * fromrgb + alpha * out
             else:
                 out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
+                print (K.int_shape(out))
 
             for block_index in range(stage_number_int / 2, -1, -1):
                 out = apply_conv(out, self.first_conv_params[block_index], 'relu')
+                print K.int_shape(out)
                 if block_index != 0:
                     out = apply_conv(out, self.second_conv_params[block_index], 'relu')
                 else:
                     out = apply_conv(out, self.second_conv_params[block_index], 'relu', 'valid')
-
-            out = K.reshape(out, (-1, self.units_in_final_layer))
+                print K.int_shape(out)
+            out = K.reshape(out, (-1, block_filter_size[0]))
             return K.dot(out, self.dense)
 
         pairs = []
@@ -242,11 +245,30 @@ class ProgresiveGrowingD(Layer):
 
 def make_generator(noise_size, final_size, n_iters_per_stage):
     inp = Input((noise_size, ))
-    out = ProgresiveGrowingG(n_iters_per_stage, final_size)(inp)
+    #out = ProgresiveGrowingG(n_iters_per_stage, final_size)(inp)
+    out = Reshape((8, 4, 16)) (inp)
+    out = Conv2D(512, (4, 4), padding='same')(out)
+    out = LeakyReLU(0.2)(out)
+    out = Conv2D(512, (3, 3), padding='same')(out)
+    out = LeakyReLU(0.2)(out)
+    out = Conv2D(3, (1, 1,)) (out)
+    out = Activation('tanh') (out)
+    out = Lambda(lambda x: x, output_shape=(None, None, 3))(out)
     return Model(inp, out)
 
 def make_discriminator(final_size, n_iters_per_stage):
     inp = Input((None, None, 3))
+    # out = Conv2D(512, (1, 1), padding='same')(inp)
+    # out = LeakyReLU(0.2)(out)
+    #
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    #
+    # out = Conv2D(512, (8, 4), padding='valid')(out)
+    # out = LeakyReLU(0.2)(out)
+    #
+    # out = Lambda(lambda x: K.reshape(x, (-1, 512)), output_shape=(512, ))(out)
+    # out = Dense(1) (out)
     out = ProgresiveGrowingD(n_iters_per_stage, final_size)(inp)
     return Model(inp, out)
 
@@ -272,7 +294,7 @@ class FolderDataset(UGANDataset):
         blocks = min(self._image_size).bit_length() - 3
         image_size = (self._image_size[0] / (2 ** (blocks - resolution)),
                       self._image_size[1] / (2 ** (blocks - resolution)))
-	image_size = min(self._image_size[0], image_size[0]), min(self._image_size[1], image_size[1])
+        image_size = min(self._image_size[0], image_size[0]), min(self._image_size[1], image_size[1])
         return resize(img, image_size) * 2 - 1
 
     def _deprocess_image(self, img):
@@ -293,15 +315,15 @@ class FolderDataset(UGANDataset):
         return self._deprocess_image(image)
 
 def main():
-    from keras.utils import plot_model
     n_iters_per_stage = int(6e5)
     generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
     discriminator = make_discriminator((128, 64), n_iters_per_stage=n_iters_per_stage)
 
     args = parser_with_default_args().parse_args()
-    args.input_folder = '../pose-gan/data/market-dataset/train'
+    args.input_folder = '../data/market-dataset/bounding_box_train'
     args.batch_size = 16
+    args.training_ratio = 1
 
 
     dataset = FolderDataset(args.input_folder, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
