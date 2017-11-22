@@ -17,6 +17,8 @@ from functools import partial
 
 
 iter_count = K.variable(0, name='iter_count', dtype='int32')
+alpha = K.variable(0, name='alpha', dtype='float32')
+
 block_filter_size = [512, 512, 512, 512, 256, 128, 64, 32, 16]
 
 class ProgresiveGrowingG(Layer):
@@ -76,8 +78,6 @@ class ProgresiveGrowingG(Layer):
 
     def call(self, inputs, **kwargs):
         stage_number = iter_count / self.n_iters_per_stage
-        alpha = K.cast(iter_count, 'float32') / float(self.n_iters_per_stage)
-        alpha -= K.cast(stage_number, 'float32')
 
         def apply_conv(out, params, activation):
             assert activation in ['relu', 'tanh']
@@ -137,7 +137,8 @@ class ProgresiveGrowingD(Layer):
         super(ProgresiveGrowingD, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.resize_fn = lambda x: K.pool2d(x, (2, 2), data_format="channels_last", pool_mode='avg', padding='same')
+        self.resize_fn = lambda x: K.pool2d(x, (2, 2), strides=(2, 2),
+                                        data_format="channels_last", pool_mode='avg', padding='valid')
         exp_number_of_blocks = min(self.final_size) / 4
 
         number_of_blocks = exp_number_of_blocks.bit_length()
@@ -186,38 +187,38 @@ class ProgresiveGrowingD(Layer):
 
     def call(self, inputs, **kwargs):
         stage_number = iter_count / self.n_iters_per_stage
-        alpha = K.cast(iter_count, 'float32') / float(self.n_iters_per_stage)
-        alpha -= K.cast(stage_number, 'float32')
 
-        def apply_conv(out, params, activation, pad='same'):
-            assert activation in ['relu', 'tanh']
+        def apply_conv(out, params, pad='same'):
             out = K.conv2d(out, params[0], padding=pad)
             out = K.bias_add(out, params[1])
-            if activation == 'relu':
-                out = K.relu(out, alpha=0.2)
-            else:
-                out = K.tanh(out)
+            out = K.relu(out, alpha=0.2)
             return out
 
         def output_for_stage(stage_number_int):
             out = inputs
-            if stage_number_int % 2 != 0:
-                out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2 + 1], 'relu')
-                out = apply_conv(out, self.first_conv_params[stage_number_int / 2 + 1], 'relu')
-                out = apply_conv(out, self.second_conv_params[stage_number_int / 2 + 1], 'relu')
-                out = self.resize_fn(out)
-                fromrgb = self.resize_fn(inputs)
-                fromrgb = apply_conv(fromrgb, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
-                out = (1 - alpha) * fromrgb + alpha * out
-            else:
-                out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
 
-            for block_index in range(stage_number_int / 2, -1, -1):
-                out = apply_conv(out, self.first_conv_params[block_index], 'relu')
+            last_block_index = (stage_number_int + 1)/2
+
+            out = apply_conv(out, self.from_rgb_conv_params[last_block_index])
+            out = apply_conv(out, self.first_conv_params[last_block_index])
+            out = apply_conv(out, self.second_conv_params[last_block_index])
+
+            if last_block_index != 0:
+                out = self.resize_fn(out)
+
+            if stage_number_int % 2 != 0:
+                fromrgb = self.resize_fn(inputs)
+                fromrgb = apply_conv(fromrgb, self.from_rgb_conv_params[last_block_index - 1])
+                out = (1 - alpha) * fromrgb + alpha * out
+
+            for block_index in range(last_block_index - 1, -1, -1):
+                out = apply_conv(out, self.first_conv_params[block_index])
                 if block_index != 0:
-                    out = apply_conv(out, self.second_conv_params[block_index], 'relu')
+                    out = apply_conv(out, self.second_conv_params[block_index])
+                    out = self.resize_fn(out)
                 else:
-                    out = apply_conv(out, self.second_conv_params[block_index], 'relu', 'valid')
+                    out = apply_conv(out, self.second_conv_params[block_index], 'valid')
+
             out = K.reshape(out, (-1, block_filter_size[0]))
             return K.dot(out, self.dense)
 
@@ -226,6 +227,7 @@ class ProgresiveGrowingD(Layer):
             pairs.append( (ktf.equal(stage_number, i), partial(output_for_stage, stage_number_int=i)))
 
         return ktf.case(pairs, default=lambda: output_for_stage(2 * self.number_of_blocks - 2))
+
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], 1)
@@ -247,15 +249,38 @@ def make_generator(noise_size, final_size, n_iters_per_stage):
     # out = LeakyReLU(0.2)(out)
     # out = Conv2D(512, (3, 3), padding='same')(out)
     # out = LeakyReLU(0.2)(out)
-    # out = Conv2D(3, (1, 1,)) (out)
-    # out = Activation('tanh') (out)
+    # torgb1 = Conv2D(3, (1, 1,)) (out)
+    # torgb1 = UpSampling2D()(torgb1)
+    # torgb1 = Activation('tanh') (torgb1)
+    #
+    # out = UpSampling2D()(out)
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # torgb2 = Conv2D(3, (1, 1,)) (out)
+    # torgb2 = Activation('tanh') (torgb2)
+    #
+    # out = Lambda(lambda inp: (1 - alpha) * inp[0] + alpha * inp[1]) ([torgb1, torgb2])
     # out = Lambda(lambda x: x, output_shape=(None, None, 3))(out)
     return Model(inp, out)
 
 def make_discriminator(gan_type, final_size, n_iters_per_stage):
     inp = Input((None, None, 3))
-    # out = Conv2D(512, (1, 1), padding='same')(inp)
+
+    # out = Conv2D(512, (1, 1)) (inp)
     # out = LeakyReLU(0.2)(out)
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # out = AveragePooling2D()(out)
+    #
+    # # from_rgb1 = AveragePooling2D()(inp)
+    # # from_rgb1 = Conv2D(512, (1, 1), padding='same')(from_rgb1)
+    # # from_rgb1 = LeakyReLU(0.2)(from_rgb1)
+    # #
+    # # out = Lambda(lambda inp: (1 - alpha) * inp[0] + alpha * inp[1]) ([from_rgb1, out])
     #
     # out = Conv2D(512, (3, 3), padding='same')(out)
     # out = LeakyReLU(0.2)(out)
@@ -264,7 +289,7 @@ def make_discriminator(gan_type, final_size, n_iters_per_stage):
     # out = LeakyReLU(0.2)(out)
     #
     # out = Lambda(lambda x: K.reshape(x, (-1, 512)), output_shape=(512, ))(out)
-    # out = Dense(1) (out)
+    # out = Dense(1, use_bias=False) (out)
     out = ProgresiveGrowingD(n_iters_per_stage, final_size)(inp)
     if gan_type == 'gan':
         out = Activation('sigmoid')(out)
@@ -303,6 +328,8 @@ class FolderDataset(UGANDataset):
 
     def _load_discriminator_data(self, index):
         self._iter_count += self._batch_size
+        alpha_val = self._iter_count / float(self._iters_per_stage) - (self._iter_count / self._iters_per_stage)
+        K.set_value(alpha, alpha_val)
         K.set_value(iter_count, self._iter_count)
         data = [np.array([self._preprocess_image(imread(os.path.join(self._input_dir, img_name)))
                           for img_name in self._image_names[index]])]
@@ -328,11 +355,14 @@ def main():
     args.batch_size = 16
     args.training_ratio = 1
 
-    generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
+    image_size = (16, 8)
+    generator = make_generator(512, image_size, n_iters_per_stage=n_iters_per_stage)
 
-    discriminator = make_discriminator(args.gan_type, (128, 64), n_iters_per_stage=n_iters_per_stage)
+    discriminator = make_discriminator(args.gan_type, image_size, n_iters_per_stage=n_iters_per_stage)
+    # from keras.optimizers import SGD
+    # discriminator.compile(loss='mse', optimizer=SGD())
 
-    dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
+    dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), image_size, iters_per_stage = n_iters_per_stage)
     gan_type = GAN_GP if args.gan_type == 'gan' else WGAN_GP
     gan = gan_type(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
