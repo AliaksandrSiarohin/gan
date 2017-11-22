@@ -241,15 +241,15 @@ class ProgresiveGrowingD(Layer):
 
 def make_generator(noise_size, final_size, n_iters_per_stage):
     inp = Input((noise_size, ))
-    #out = ProgresiveGrowingG(n_iters_per_stage, final_size)(inp)
-    out = Reshape((8, 4, 16)) (inp)
-    out = Conv2D(512, (4, 4), padding='same')(out)
-    out = LeakyReLU(0.2)(out)
-    out = Conv2D(512, (3, 3), padding='same')(out)
-    out = LeakyReLU(0.2)(out)
-    out = Conv2D(3, (1, 1,)) (out)
-    out = Activation('tanh') (out)
-    out = Lambda(lambda x: x, output_shape=(None, None, 3))(out)
+    out = ProgresiveGrowingG(n_iters_per_stage, final_size)(inp)
+    # out = Reshape((8, 4, 16)) (inp)
+    # out = Conv2D(512, (4, 4), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # out = Conv2D(512, (3, 3), padding='same')(out)
+    # out = LeakyReLU(0.2)(out)
+    # out = Conv2D(3, (1, 1,)) (out)
+    # out = Activation('tanh') (out)
+    # out = Lambda(lambda x: x, output_shape=(None, None, 3))(out)
     return Model(inp, out)
 
 def make_discriminator(final_size, n_iters_per_stage):
@@ -318,7 +318,7 @@ def main():
     parser.add_argument("--input_dir", default='../data/market-dataset/bounding_box_train',
                         help='Foldet with input images')
     parser.add_argument("--gan_type", choices =['gan', 'wgan'], default='wgan', help='Type of gan to use')
-    parser.add_argument("--iters_per_stage", type=int, default=int(1e5), help="Number of iters in each stage paper (6e5)")
+    parser.add_argument("--iters_per_stage", type=int, default=int(100), help="Number of iters in each stage paper (6e5)")
 
 
     args = parser.parse_args()
@@ -326,9 +326,9 @@ def main():
     args.batch_size = 16
     args.training_ratio = 1
 
-    generator = make_generator(512, (8, 4), n_iters_per_stage=n_iters_per_stage)
+    generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
-    discriminator = make_discriminator((8, 4), n_iters_per_stage=n_iters_per_stage)
+    discriminator = make_discriminator((128, 64), n_iters_per_stage=n_iters_per_stage)
 
     dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
     gan = GAN_GP(generator, discriminator, **vars(args))
