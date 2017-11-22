@@ -252,7 +252,7 @@ def make_generator(noise_size, final_size, n_iters_per_stage):
     # out = Lambda(lambda x: x, output_shape=(None, None, 3))(out)
     return Model(inp, out)
 
-def make_discriminator(final_size, n_iters_per_stage):
+def make_discriminator(gan_type, final_size, n_iters_per_stage):
     inp = Input((None, None, 3))
     # out = Conv2D(512, (1, 1), padding='same')(inp)
     # out = LeakyReLU(0.2)(out)
@@ -266,7 +266,8 @@ def make_discriminator(final_size, n_iters_per_stage):
     # out = Lambda(lambda x: K.reshape(x, (-1, 512)), output_shape=(512, ))(out)
     # out = Dense(1) (out)
     out = ProgresiveGrowingD(n_iters_per_stage, final_size)(inp)
-    out = Activation('sigmoid')(out)
+    if gan_type == 'gan':
+        out = Activation('sigmoid')(out)
     return Model(inp, out)
 
 
@@ -284,6 +285,9 @@ class FolderDataset(UGANDataset):
         self._iters_per_stage = iters_per_stage
         self._batches_before_shuffle = int(self._image_names.shape[0] // self._batch_size)
         self._iter_count = 0
+
+    def number_of_batches_per_epoch(self):
+        return 1000
 
     def _preprocess_image(self, img):
         stage_number = self._iter_count / self._iters_per_stage
@@ -312,13 +316,11 @@ class FolderDataset(UGANDataset):
         return self._deprocess_image(image)
 
 def main():
-
-
     parser = parser_with_default_args()
     parser.add_argument("--input_dir", default='../data/market-dataset/bounding_box_train',
                         help='Foldet with input images')
     parser.add_argument("--gan_type", choices =['gan', 'wgan'], default='wgan', help='Type of gan to use')
-    parser.add_argument("--iters_per_stage", type=int, default=int(100), help="Number of iters in each stage paper (6e5)")
+    parser.add_argument("--iters_per_stage", type=int, default=int(1e5), help="Number of iters in each stage paper (6e5)")
 
 
     args = parser.parse_args()
@@ -328,7 +330,7 @@ def main():
 
     generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
-    discriminator = make_discriminator((128, 64), n_iters_per_stage=n_iters_per_stage)
+    discriminator = make_discriminator(args.gan_type, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
     dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
     gan = GAN_GP(generator, discriminator, **vars(args))
