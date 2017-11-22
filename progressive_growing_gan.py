@@ -333,7 +333,8 @@ def main():
     discriminator = make_discriminator(args.gan_type, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
     dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
-    gan = GAN_GP(generator, discriminator, **vars(args))
+    gan_type = GAN_GP if args.gan_type == 'gan' else WGAN_GP
+    gan = gan_type(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
 
     trainer.train()
