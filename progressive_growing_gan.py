@@ -201,10 +201,12 @@ class ProgresiveGrowingD(Layer):
 
             out = apply_conv(out, self.from_rgb_conv_params[last_block_index])
             out = apply_conv(out, self.first_conv_params[last_block_index])
-            out = apply_conv(out, self.second_conv_params[last_block_index])
 
             if last_block_index != 0:
+                out = apply_conv(out, self.second_conv_params[last_block_index])
                 out = self.resize_fn(out)
+            else:
+                out = apply_conv(out, self.second_conv_params[last_block_index], pad='valid')
 
             if stage_number_int % 2 != 0:
                 fromrgb = self.resize_fn(inputs)
@@ -355,7 +357,7 @@ def main():
     args.batch_size = 16
     args.training_ratio = 1
 
-    image_size = (16, 8)
+    image_size = (128, 64)
     generator = make_generator(512, image_size, n_iters_per_stage=n_iters_per_stage)
 
     discriminator = make_discriminator(args.gan_type, image_size, n_iters_per_stage=n_iters_per_stage)
