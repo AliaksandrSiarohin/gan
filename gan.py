@@ -13,7 +13,7 @@ class GAN(object):
     def __init__(self, generator, discriminator,
                  generator_optimizer=Adam(0.0001, beta_1=.5, beta_2=0.9),
                  discriminator_optimizer=Adam(0.0001, beta_1=.5, beta_2=0.9),
-                 batch_size = 64, custom_objects={}, **kwargs):
+                 custom_objects={}, **kwargs):
         if type(generator) == str:
             self._generator = load_model(generator, custom_objects=custom_objects)
         else:
@@ -39,8 +39,6 @@ class GAN(object):
         else:
             self._discriminator_input = [discriminator_input]
             
-        self._batch_size = batch_size
-        
         self.generator_metric_names = []
         self.discriminator_metric_names = ['true', 'fake']
 
@@ -94,10 +92,11 @@ class GAN(object):
         """
             Create generator loss and metrics
         """
+
         def fake_loss(y_true, y_pred):
-            return -K.mean(K.log(1 - y_pred[self._batch_size:] + 1e-7))
+            return -K.mean(K.log(1 - y_pred[K.shape(y_true)[0]:] + 1e-7))
         def true_loss(y_true, y_pred):
-            return -K.mean(K.log(y_pred[:self._batch_size] + 1e-7))
+            return -K.mean(K.log(y_pred[:K.shape(y_true)[0]] + 1e-7))
         def discriminator_crossentrohy_loss(y_true, y_pred):
             return fake_loss(y_true, y_pred) + true_loss(y_true, y_pred)
         return discriminator_crossentrohy_loss, [true_loss, fake_loss]

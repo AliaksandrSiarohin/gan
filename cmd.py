@@ -9,7 +9,7 @@ def parser_with_default_args():
     parser.add_argument("--output_dir", default='output/generated_samples', help="Directory with generated sample images")
     parser.add_argument("--batch_size", default=64, type=int, help='Size of the batch')
     parser.add_argument("--training_ratio", default=5, type=int,
-                        help="The training ratio is the number of discriminator updates per generator update." + 
+                        help="The training ratio is the number of discriminator updates per generator update." +
                         "The paper uses 5")
     parser.add_argument("--gradient_penalty_weight", default=10, type=float, help='Weight of gradient penalty loss')
     parser.add_argument("--number_of_epochs", default=500, type=int, help="Number of training epochs")
@@ -19,8 +19,6 @@ def parser_with_default_args():
     parser.add_argument("--generator_checkpoint", default=None, help="Previosly saved model of generator")
     parser.add_argument("--discriminator_checkpoint", default=None, help="Previosly saved model of discriminator")
     
-    parser.add_argument("--input_dir", default='../market-dataset/bounding_box_train', help='Folder with real images for training')
-
     parser.add_argument("--display_ratio", default=1, type=int,  help='Number of epochs between ploting')
     parser.add_argument("--start_epoch", default=0, type=int, help='Start epoch for starting from checkpoint')
 

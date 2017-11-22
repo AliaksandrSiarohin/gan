@@ -4,6 +4,26 @@ from wgan import WGAN
 from functools import partial
 
 
+def gradient_peanalty(real, fake, gp_weight, discriminator):
+    weights = K.random_uniform(K.shape(real)[0:1])
+    weights = K.reshape(weights, (-1, 1, 1, 1))
+    averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
+
+    gp_list = []
+
+    gradients = K.gradients(K.sum(discriminator(averaged_samples)), averaged_samples)
+    for gradient in gradients:
+        gradient = K.reshape(gradient, (K.shape(real)[0], -1))
+        gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis = 1))
+        gradient_penalty = gp_weight * K.square(1 - gradient_l2_norm)
+        gp_list.append(K.mean(gradient_penalty))
+
+    fn = lambda y_true, y_pred, index: gp_list[index]
+    gp_fn_list = [partial(fn, index=i)  for i in range(len(gp_list))]
+    for i, gp_fn in enumerate(gp_fn_list):
+        gp_fn.__name__ = 'gp_loss_' + str(i)
+    return gp_fn_list
+
 class WGAN_GP(WGAN):
     """
         Class for representing WGAN_GP (https://arxiv.org/abs/1704.00028)
@@ -26,25 +46,10 @@ class WGAN_GP(WGAN):
 
         real = self._discriminator_input
         fake = self._discriminator_fake_input
-        weights = K.random_uniform((self._batch_size, 1, 1, 1))
-        averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
 
-        gp_list = []
-        
-        gradients = K.gradients(K.sum(self._discriminator(averaged_samples)), averaged_samples)
-        for gradient in gradients:
-            gradient = K.reshape(gradient, (self._batch_size, -1))
-            gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis = 1))
-            gradient_penalty = self._gradient_penalty_weight * K.square(1 - gradient_l2_norm)
-            gp_list.append(K.mean(gradient_penalty))        
-        
-        fn = lambda y_true, y_pred, index: gp_list[index]
-        gp_fn_list = [partial(fn, index=i)  for i in range(len(gp_list))]
-        for i, gp_fn in enumerate(gp_fn_list):
-            gp_fn.__name__ = 'gp_loss_' + str(i)
-        
+        gp_fn_list = gradient_peanalty(real, fake, self._gradient_penalty_weight, self._discriminator)
         def gp_loss(y_true, y_pred):
-            return sum(gp_list, K.zeros((1, ))) 
+            return sum(map(lambda fn: fn(y_true, y_pred), gp_fn_list), K.zeros((1, )))
             
         def discriminator_wasserstein_loss(y_true, y_pred):           
             return fake_loss(y_true, y_pred) + true_loss(y_true, y_pred) + gp_loss(y_true, y_pred)

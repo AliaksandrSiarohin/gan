@@ -20,11 +20,11 @@ class LSGAN(GAN):
 
     def _compile_discriminator_loss(self):
         def true_loss(y_true, y_pred):
-            y_true = y_pred[:self._batch_size]
+            y_true = y_pred[:K.shape(y_true)[0]]
             return K.mean((y_true - 1) ** 2)
 
         def fake_loss(y_true, y_pred):
-            y_fake = y_pred[self._batch_size:]
+            y_fake = y_pred[K.shape(y_true)[0]:]
             return K.mean(y_fake ** 2)
 
         def discriminator_least_square_loss(y_true, y_pred):

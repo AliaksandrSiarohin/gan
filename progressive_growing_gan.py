@@ -11,6 +11,7 @@ import numpy as np
 from cmd import parser_with_default_args
 from dataset import UGANDataset
 from wgan_gp import WGAN_GP
+from gan_gp import GAN_GP
 from train import Trainer
 from functools import partial
 
@@ -200,28 +201,23 @@ class ProgresiveGrowingD(Layer):
 
         def output_for_stage(stage_number_int):
             out = inputs
-            print "Stage number %s" % stage_number_int
             if stage_number_int % 2 != 0:
                 out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2 + 1], 'relu')
                 out = apply_conv(out, self.first_conv_params[stage_number_int / 2 + 1], 'relu')
                 out = apply_conv(out, self.second_conv_params[stage_number_int / 2 + 1], 'relu')
-                print K.int_shape(out)
                 out = self.resize_fn(out)
                 fromrgb = self.resize_fn(inputs)
                 fromrgb = apply_conv(fromrgb, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
                 out = (1 - alpha) * fromrgb + alpha * out
             else:
                 out = apply_conv(out, self.from_rgb_conv_params[stage_number_int / 2], 'relu')
-                print (K.int_shape(out))
 
             for block_index in range(stage_number_int / 2, -1, -1):
                 out = apply_conv(out, self.first_conv_params[block_index], 'relu')
-                print K.int_shape(out)
                 if block_index != 0:
                     out = apply_conv(out, self.second_conv_params[block_index], 'relu')
                 else:
                     out = apply_conv(out, self.second_conv_params[block_index], 'relu', 'valid')
-                print K.int_shape(out)
             out = K.reshape(out, (-1, block_filter_size[0]))
             return K.dot(out, self.dense)
 
@@ -270,6 +266,7 @@ def make_discriminator(final_size, n_iters_per_stage):
     # out = Lambda(lambda x: K.reshape(x, (-1, 512)), output_shape=(512, ))(out)
     # out = Dense(1) (out)
     out = ProgresiveGrowingD(n_iters_per_stage, final_size)(inp)
+    out = Activation('sigmoid')(out)
     return Model(inp, out)
 
 
@@ -315,19 +312,26 @@ class FolderDataset(UGANDataset):
         return self._deprocess_image(image)
 
 def main():
-    n_iters_per_stage = int(6e5)
-    generator = make_generator(512, (128, 64), n_iters_per_stage=n_iters_per_stage)
 
-    discriminator = make_discriminator((128, 64), n_iters_per_stage=n_iters_per_stage)
 
-    args = parser_with_default_args().parse_args()
-    args.input_folder = '../data/market-dataset/bounding_box_train'
+    parser = parser_with_default_args()
+    parser.add_argument("--input_dir", default='../data/market-dataset/bounding_box_train',
+                        help='Foldet with input images')
+    parser.add_argument("--gan_type", choices =['gan', 'wgan'], default='wgan', help='Type of gan to use')
+    parser.add_argument("--iters_per_stage", type=int, default=int(1e5), help="Number of iters in each stage paper (6e5)")
+
+
+    args = parser.parse_args()
+    n_iters_per_stage = args.iters_per_stage
     args.batch_size = 16
     args.training_ratio = 1
 
+    generator = make_generator(512, (8, 4), n_iters_per_stage=n_iters_per_stage)
 
-    dataset = FolderDataset(args.input_folder, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
-    gan = WGAN_GP(generator, discriminator, **vars(args))
+    discriminator = make_discriminator((8, 4), n_iters_per_stage=n_iters_per_stage)
+
+    dataset = FolderDataset(args.input_dir, args.batch_size, (512, ), (128, 64), iters_per_stage = n_iters_per_stage)
+    gan = GAN_GP(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
 
     trainer.train()
