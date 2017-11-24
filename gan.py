@@ -76,13 +76,14 @@ class GAN(object):
             Create model that produce discriminator scores from real_data and noise(that will be inputed to generator)
         """
         self._set_trainable(self._generator, False)
-        self._set_trainable(self._discriminator, True)        
-        
-        disc_in = [Concatenate(axis=0)([true, fake])
-                   for true, fake in zip(self._discriminator_input, self._discriminator_fake_input)]
+        self._set_trainable(self._discriminator, True)
+
+        disc_out = Concatenate(axis=0) ([self._discriminator(self._discriminator_input),
+                                         self._discriminator(self._discriminator_fake_input)])
+
 
         discriminator_model = Model(inputs=self._discriminator_input + self._generator_input,
-                                    outputs=self._discriminator(disc_in))
+                                    outputs=disc_out)
         loss, metrics = self._compile_discriminator_loss()
         discriminator_model.compile(optimizer=self._discriminator_optimizer, loss=loss, metrics = metrics)
 

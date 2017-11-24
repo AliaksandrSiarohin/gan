@@ -6,10 +6,10 @@ import pylab as plt
 import keras.backend as K
 assert K.image_data_format() == 'channels_last', "Backend should be tensorflow and data_format channel_last"
 from keras.backend import tf as ktf
-#config = ktf.ConfigProto()
-#config.gpu_options.allow_growth = True
-#session = ktf.Session(config=config)
-#K.set_session(session)
+config = ktf.ConfigProto()
+config.gpu_options.allow_growth = True
+session = ktf.Session(config=config)
+K.set_session(session)
 from tqdm import tqdm
 
 class Trainer(object):
@@ -82,7 +82,7 @@ class Trainer(object):
 
        
         g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
-                                                               np.mean(np.array(discriminator_loss_list), axis = 0))        
+                                                               np.mean(np.array(discriminator_loss_list), axis = 0))
         print (g_loss_str)
         print (d_loss_str)
         

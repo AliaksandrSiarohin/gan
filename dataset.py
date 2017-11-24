@@ -40,7 +40,6 @@ class UGANDataset(object):
         return image_batch        
 
     def display(self, output_batch, input_batch = None):
-        print (output_batch.shape)
         row = self._batch_size
         col = 1
         batch = output_batch
@@ -54,7 +53,6 @@ class UGANDataset(object):
                 batch_index += 1
         return result_image
 
-    
 class ArrayDataset(UGANDataset):
     def __init__(self, X, batch_size, noise_size):
         super(ArrayDataset, self).__init__(batch_size, noise_size)
