@@ -1,7 +1,8 @@
 from keras.models import Model, Input
-from keras.layers import Activation, GlobalAveragePooling2D, Flatten
+from keras.layers import Activation, GlobalAveragePooling2D, Flatten, Add
 from keras.applications import InceptionV3
 from keras.layers import Dense, Conv2D
+import keras.backend as K
 
 from layer_utils import resblock
 import numpy as np
@@ -14,6 +15,7 @@ from train import Trainer
 
 def make_generator(image_size):
     inp = Input(list(image_size) + [3])
+    scores = Input([1])
 
     out = Conv2D(32, (3, 3), use_bias=True, padding='same')(inp)
     out = resblock(out, (3, 3), 'DOWN', 64)
@@ -23,11 +25,12 @@ def make_generator(image_size):
 
     out = Conv2D(3, (3, 3), use_bias=True, padding='same')(out)
     out = Activation('tanh') (out)
-    return Model(inputs=inp, outputs=out)
+    return Model(inputs=[inp, scores], outputs=[out, scores])
 
 
 def make_discriminator(image_size):
     inp = Input(list(image_size) + [3])
+    scores = Input([1])
 
     model = InceptionV3(weights='imagenet', include_top=False, input_tensor=inp)
 
@@ -35,13 +38,61 @@ def make_discriminator(image_size):
 
     out = GlobalAveragePooling2D()(out)
     out = Dense(1)(out)
-    return Model(inp, out)
+    out = Add()([out, scores])
+    return Model(inputs=[inp, scores], outputs=out)
 
+
+
+class MEM_GAN(WGAN_GP):
+    def __init__(self, generator, discriminator, l1_penalty_weight = 1,  **kwargs):
+        super(MEM_GAN, self).__init__(generator, discriminator, **kwargs)
+        self.generator_metric_names = ['l1', 'mem_loss']
+        self.discriminator_metric_names = ['gp_loss'] + ['true', 'fake']
+        self.l1_penalty_weight = l1_penalty_weight
+
+    def _compile_generator_loss(self):
+        fake = self._discriminator_fake_input
+
+        l1 = self.l1_penalty_weight * K.mean(K.abs(self._generator_input[0] - fake[0]))
+
+        def l1_loss(y_true, y_pred):
+            return l1
+
+        def mem_loss(y_true, y_pred):
+            return K.mean((y_pred + fake[1] - 1) ** 2)
+
+        def generator_least_square_loss(y_true, y_pred):
+            return mem_loss(y_pred, y_pred) + l1_loss(y_true, y_pred)
+        return generator_least_square_loss, [l1_loss, mem_loss]
+
+    def _compile_discriminator_loss(self):
+        _, metrics = super(MEM_GAN, self)._compile_discriminator_loss()
+        gp_fn_list = metrics[0:1]
+
+        print (gp_fn_list)
+
+        fake = self._discriminator_fake_input
+
+        def true_loss(y_true, y_pred):
+            y_true = y_pred[:K.shape(y_true)[0]]
+            return K.mean(y_true ** 2)
+
+        def fake_loss(y_true, y_pred):
+            y_fake = y_pred[K.shape(y_true)[0]:] + fake[1]
+            return K.mean(y_fake ** 2)
+
+        def gp_loss(y_true, y_pred):
+            return sum(map(lambda fn: fn(y_true, y_pred), gp_fn_list), K.zeros((1, )))
+
+        def loss(y_true, y_pred):
+            return fake_loss(y_true, y_pred) + true_loss(y_true, y_pred) + gp_loss(y_true, y_pred)
+
+        return loss, gp_fn_list + [true_loss, fake_loss]
 
 import os
-from skimage.transform import resize
 from skimage import img_as_ubyte
 from skimage.io import imread
+from skimage.color import gray2rgb
 
 class LamemDataset(FolderDataset):
     def __init__(self, input_dir, batch_size, image_size, train_file):
@@ -49,24 +100,29 @@ class LamemDataset(FolderDataset):
         with open(train_file) as f:
             image_score_pair = [pair.split(' ') for pair in f.read().split('\n')]
             image_score_pair = filter(lambda x: len(x) == 2, image_score_pair)
-            self._image_names = np.array(map(lambda x: x[0], image_score_pair))
+            image_score_pair = map(lambda x: (str(x[0]), float(x[1])), image_score_pair)
+            self.image_score_pairs = np.array(image_score_pair)
 
         self._input_dir = input_dir
         self._image_size = image_size
-        self._batches_before_shuffle = int(self._image_names.shape[0] // self._batch_size)
+        self._batches_before_shuffle = int(self.image_score_pairs.shape[0] // self._batch_size)
 
     def number_of_batches_per_epoch(self):
-        return 1000
+        return 10
 
     def _preprocess_image(self, img):
-        return resize(img, self._image_size) * 2 - 1
+        if len(img.shape) == 2:
+            img = img_as_ubyte(gray2rgb(img))
+        return (img/255.0) * 2 - 1
 
     def _deprocess_image(self, img):
         return img_as_ubyte((img + 1) / 2)
 
     def _load_data_batch(self, index):
-        data = [np.array([self._preprocess_image(imread(os.path.join(self._input_dir, img_name)))
-                          for img_name in self._image_names[index]])]
+        images = np.array([self._preprocess_image(imread(os.path.join(self._input_dir, img_name)))
+                          for img_name in self.image_score_pairs[index, 0]])
+        scores = np.array(self.image_score_pairs[index,1], dtype='float32')
+        data = [images, scores]
         return data
 
     def next_generator_sample(self):
@@ -80,16 +136,18 @@ class LamemDataset(FolderDataset):
         return image_batch
 
     def _shuffle_data(self):
-        np.random.shuffle(self._image_names)
+        np.random.shuffle(self.image_score_pairs)
 
     def display(self, output_batch, input_batch = None):
         image_in = super(FolderDataset, self).display(input_batch[0])
-        image_out = super(FolderDataset, self).display(output_batch)
+        image_out = super(FolderDataset, self).display(output_batch[0])
         return self._deprocess_image(np.concatenate([image_in, image_out], axis=1))
+
+
 
 def main():
     parser = parser_with_default_args()
-    parser.add_argument("--input_dir", default='lamem/images',
+    parser.add_argument("--input_dir", default='lamem/image_r',
                         help='Foldet with input images')
     parser.add_argument("--train_file", default='lamem/splits/train_1.txt', help="File with name and scores")
 
@@ -103,7 +161,7 @@ def main():
     discriminator = make_discriminator(image_size)
 
     dataset = LamemDataset(args.input_dir, args.batch_size, image_size, args.train_file)
-    gan_type = WGAN_GP
+    gan_type = MEM_GAN
     gan = gan_type(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
 
