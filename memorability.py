@@ -12,6 +12,7 @@ from dataset import FolderDataset
 from wgan_gp import WGAN_GP
 from train import Trainer
 
+from layer_utils import content_features_model
 
 def make_generator(image_size):
     inp = Input(list(image_size) + [3])
@@ -42,16 +43,23 @@ def make_discriminator(image_size):
     return Model(inputs=[inp, scores], outputs=out)
 
 class MEM_GAN(WGAN_GP):
-    def __init__(self, generator, discriminator, l1_penalty_weight=100, **kwargs):
+    def __init__(self, generator, discriminator, l1_penalty_weight,
+                 image_size, content_loss_layer, **kwargs):
         super(MEM_GAN, self).__init__(generator, discriminator, **kwargs)
         self.generator_metric_names = ['l1', 'gan_loss', 'mem_inc']
         self.discriminator_metric_names = ['true', 'fake']
         self.l1_penalty_weight = l1_penalty_weight
-
+        self.content_loss_layer = content_loss_layer
+        self.image_size = image_size
+        
     def _compile_generator_loss(self):
         fake = self._discriminator_fake_input
-
-        l1 = self.l1_penalty_weight * K.mean(K.abs(self._generator_input[0] - fake[0]))
+        
+        if self.content_loss_layer is not None:
+            model = content_features_model(self.image_size, self.content_loss_layer)
+            l1 = self.l1_penalty_weight * K.mean(K.abs(model(self._generator_input[0]) - model(fake[0])))
+        else:
+            l1 = self.l1_penalty_weight * K.mean(K.abs(self._generator_input[0] - fake[0]))
 
         def l1_loss(y_true, y_pred):
             return l1
@@ -93,6 +101,7 @@ import os
 from skimage import img_as_ubyte
 from skimage.io import imread
 from skimage.color import gray2rgb
+from skimage.transform import resize
 
 class LamemDataset(FolderDataset):
     def __init__(self, input_dir, batch_size, image_size, train_file):
@@ -150,17 +159,19 @@ def main():
     parser.add_argument("--input_dir", default='lamem/image_r',
                         help='Foldet with input images')
     parser.add_argument("--train_file", default='lamem/splits/train_1.txt', help="File with name and scores")
-
+    parser.add_argument("--l1_penalty_weight", default=10, type=float, help="l1 penalty")
+    parser.add_argument("--content_loss_layer", default=None, help='Content loss layer')
+    
     args = parser.parse_args()
     args.batch_size = 4
     args.training_ratio = 1
-    image_size = (256, 256)
+    args.image_size = (256, 256)
 
-    generator = make_generator(image_size)
+    generator = make_generator(args.image_size)
 
-    discriminator = make_discriminator(image_size)
+    discriminator = make_discriminator(args.image_size)
 
-    dataset = LamemDataset(args.input_dir, args.batch_size, image_size, args.train_file)
+    dataset = LamemDataset(args.input_dir, args.batch_size, args.image_size, args.train_file)
     gan_type = MEM_GAN
     gan = gan_type(generator, discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
