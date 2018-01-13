@@ -5,7 +5,12 @@ from functools import partial
 
 
 def gradient_peanalty(real, fake, gp_weight, discriminator):
-    weights = K.random_uniform(K.shape(real)[0:1])
+    if type(real) == list:
+        batch_size = K.shape(real[0])[0:1]
+    else:
+        batch_size = K.shape(real)[0:1]
+
+    weights = K.random_uniform(batch_size)
     weights = K.reshape(weights, (-1, 1, 1, 1))
     averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
 
@@ -13,13 +18,13 @@ def gradient_peanalty(real, fake, gp_weight, discriminator):
 
     gradients = K.gradients(K.sum(discriminator(averaged_samples)), averaged_samples)
     for gradient in gradients:
-        gradient = K.reshape(gradient, (K.shape(real)[0], -1))
+        gradient = K.reshape(gradient, (batch_size[0], -1))
         gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis = 1))
         gradient_penalty = gp_weight * K.square(1 - gradient_l2_norm)
         gp_list.append(K.mean(gradient_penalty))
 
     fn = lambda y_true, y_pred, index: gp_list[index]
-    gp_fn_list = [partial(fn, index=i)  for i in range(len(gp_list))]
+    gp_fn_list = [partial(fn, index=i) for i in range(len(gp_list))]
     for i, gp_fn in enumerate(gp_fn_list):
         gp_fn.__name__ = 'gp_loss_' + str(i)
     return gp_fn_list
