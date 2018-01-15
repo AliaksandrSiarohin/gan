@@ -20,15 +20,22 @@ class Trainer(object):
         self.dataset = dataset
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs
-        self.generator = gan.get_generator()
-        self.discriminator = gan.get_discriminator()
         self.gan = gan
         
-        generator_model, discriminator_model = gan.compile_models()        
+        generator_model, discriminator_model = gan.compile_models()
+        self.generator = gan.get_generator()
+        self.discriminator = gan.get_discriminator()
+
         self.generator_model = generator_model
         self.discriminator_model = discriminator_model
-        
-        self.batch_size = batch_size        
+
+        #Fake targets, used to bypass keras interface
+        self.disc_targets = np.zeros((batch_size, ) +
+                         tuple(np.ones(len(self.discriminator_model.output_shape) - 1, dtype='int32')))
+        self.gen_targets = np.zeros((batch_size, ) +
+                         tuple(np.ones(len(self.generator_model.output_shape) - 1, dtype='int32')))
+
+        self.batch_size = batch_size
         self.output_dir = output_dir
         self.checkpoints_dir = checkpoints_dir
         self.training_ratio = training_ratio
@@ -61,11 +68,11 @@ class Trainer(object):
             generator_batch = self.dataset.next_generator_sample()
             #All zeros as ground truth because it`s not used
             loss = self.discriminator_model.train_on_batch(
-                            discrimiantor_batch + generator_batch, np.zeros([self.batch_size]))
+                            discrimiantor_batch + generator_batch, self.disc_targets)
             discriminator_loss_list.append(loss)
 
         generator_batch = self.dataset.next_generator_sample()
-        loss = self.generator_model.train_on_batch(generator_batch, np.zeros([self.batch_size]))
+        loss = self.generator_model.train_on_batch(generator_batch, self.gen_targets)
         generator_loss_list.append(loss)
     
     def train_one_epoch(self, validation_epoch=False):
