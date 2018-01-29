@@ -36,11 +36,12 @@ class UGANDataset(object):
 
     def next_discriminator_sample(self):
         index = self._next_data_index()
+        print (index)
         image_batch = self._load_discriminator_data(index)
         return image_batch        
 
     def display(self, output_batch, input_batch = None):
-        row = self._batch_size
+        row = output_batch.shape[0]
         col = 1
         batch = output_batch
         height, width = batch.shape[1], batch.shape[2]

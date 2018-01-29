@@ -7,11 +7,14 @@ from functools import partial
 def gradient_peanalty(real, fake, gp_weight, discriminator):
     if type(real) == list:
         batch_size = K.shape(real[0])[0:1]
+        input_shape = K.int_shape(real[0])
     else:
         batch_size = K.shape(real)[0:1]
+        input_shape = K.int_shape(real)
 
     weights = K.random_uniform(batch_size)
-    weights = K.reshape(weights, (-1, 1, 1, 1))
+
+    weights = K.reshape(weights, (-1, ) + (1, ) * (len(input_shape) - 1))
     averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
 
     gp_list = []
