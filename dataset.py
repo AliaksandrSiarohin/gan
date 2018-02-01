@@ -36,7 +36,6 @@ class UGANDataset(object):
 
     def next_discriminator_sample(self):
         index = self._next_data_index()
-        print (index)
         image_batch = self._load_discriminator_data(index)
         return image_batch        
 
