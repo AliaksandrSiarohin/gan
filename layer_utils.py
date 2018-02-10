@@ -6,6 +6,7 @@ from keras.layers.pooling import AveragePooling2D
 from keras.backend import tf as ktf
 from keras.engine.topology import Layer
 from keras.models import Input, Model
+from keras import backend as K
 
 import numpy as np
 
@@ -82,21 +83,23 @@ class GaussianFromPointsLayer(Layer):
         return dict(list(base_config.items()) + list(config.items()))
     
 
-def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
+def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization):
     assert resample in ["UP", "SAME", "DOWN"]
+
+    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
 
     if resample == "UP":
         shortcut = UpSampling2D(size=(2, 2)) (x)        
         shortcut = Conv2D(nfilters, kernel_size, padding = 'same',
                           kernel_initializer='he_uniform', use_bias = True) (shortcut)
                 
-        convpath = norm() (x)
+        convpath = norm(axis=feature_axis)(x)
         convpath = Activation('relu') (convpath)
         convpath = UpSampling2D(size=(2, 2))(convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
                                       use_bias = False, padding='same')(convpath)
-        convpath = norm() (convpath)
-        convpath = Activation('relu') (convpath)
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu')(convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
                                      use_bias = True, padding='same') (convpath)
         
@@ -105,11 +108,11 @@ def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
         shortcut = Conv2D(nfilters, kernel_size, padding = 'same',
                           kernel_initializer='he_uniform', use_bias = True) (x)
                 
-        convpath = norm() (x)
+        convpath = norm(axis=feature_axis)(x)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
                                  use_bias = False, padding='same')(convpath)        
-        convpath = norm() (convpath)
+        convpath = norm(axis=feature_axis)(convpath)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
                                  use_bias = True, padding='same') (convpath)
@@ -121,12 +124,12 @@ def resblock(x, kernel_size, resample, nfilters, norm = BatchNormalization):
         shortcut = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
                           padding = 'same', use_bias = True) (shortcut)        
         
-        convpath = norm() (x)
+        convpath = norm(axis=feature_axis)(x)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
                                  use_bias = False, padding='same')(convpath)
         convpath = AveragePooling2D(pool_size = (2, 2)) (convpath)
-        convpath = norm() (convpath)
+        convpath = norm(axis=feature_axis)(convpath)
         convpath = Activation('relu') (convpath)
         convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
                                  use_bias = True, padding='same') (convpath)        
