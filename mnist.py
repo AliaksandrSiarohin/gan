@@ -75,7 +75,6 @@ class MNISTDataset(ArrayDataset):
         image = np.squeeze(np.round(image).astype(np.uint8))
         return image
 
-
 def main():
     generator = make_generator()
     discriminator = make_discriminator()

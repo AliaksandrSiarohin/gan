@@ -19,14 +19,20 @@ class GAN_GP(GAN):
         self.generator_metric_names = []
         self.discriminator_metric_names = ['gp_loss_' + str(i) for i in range(len(self._discriminator_input))] + ['true', 'fake']
 
+    def get_data_for_gradient_penalty(self):
+        real = self._discriminator_input
+        fake = self._discriminator_fake_input
+        discriminator = self._discriminator
+
+        return real, fake, discriminator
+
     def _compile_discriminator_loss(self):
         _, metrics = super(GAN_GP, self)._compile_discriminator_loss()
         true_loss, fake_loss = metrics
 
-        real = self._discriminator_input
-        fake = self._discriminator_fake_input
+        real, fake, discriminator = self.get_data_for_gradient_penalty()
+        gp_fn_list = gradient_peanalty(real, fake, self._gradient_penalty_weight, discriminator)
 
-        gp_fn_list = gradient_peanalty(real, fake, self._gradient_penalty_weight, self._discriminator)
         def gp_loss(y_true, y_pred):
             return sum(map(lambda fn: fn(y_true, y_pred), gp_fn_list), K.zeros((1, )))
 
