@@ -7,19 +7,21 @@ from functools import partial
 def gradient_peanalty(real, fake, gp_weight, discriminator):
     if type(real) == list:
         batch_size = K.shape(real[0])[0:1]
+        input_shape = K.int_shape(real[0])
     else:
         batch_size = K.shape(real)[0:1]
+        input_shape = K.int_shape(real)
 
     weights = K.random_uniform(batch_size)
-    weights = K.reshape(weights, (-1, 1, 1, 1))
+
+    weights = K.reshape(weights, (-1, ) + (1, ) * (len(input_shape) - 1))
     averaged_samples = [(weights * r) + ((1 - weights) * f) for r, f in zip(real, fake)]
 
     gp_list = []
-
     gradients = K.gradients(K.sum(discriminator(averaged_samples)), averaged_samples)
     for gradient in gradients:
         gradient = K.reshape(gradient, (batch_size[0], -1))
-        gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis = 1))
+        gradient_l2_norm = K.sqrt(K.sum(K.square(gradient), axis=1))
         gradient_penalty = gp_weight * K.square(1 - gradient_l2_norm)
         gp_list.append(K.mean(gradient_penalty))
 
@@ -34,7 +36,7 @@ class WGAN_GP(WGAN):
         Class for representing WGAN_GP (https://arxiv.org/abs/1704.00028)
     """
     def __init__(self, generator, discriminator,
-                       gradient_penalty_weight = 10,
+                       gradient_penalty_weight=10,
                        generator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
                        discriminator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
                        **kwargs):

@@ -40,7 +40,7 @@ class UGANDataset(object):
         return image_batch        
 
     def display(self, output_batch, input_batch = None):
-        row = self._batch_size
+        row = output_batch.shape[0]
         col = 1
         batch = output_batch
         height, width = batch.shape[1], batch.shape[2]
