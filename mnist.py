@@ -4,7 +4,7 @@ from keras.layers.convolutional import Convolution2D, Conv2DTranspose
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 
-from lsgan import LSGAN
+from gan_tf import GAN
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
 from train import Trainer
@@ -15,21 +15,21 @@ def make_generator():
     """Creates a generator model that takes a 100-dimensional noise vector as a "seed", and outputs images
     of size 28x28x1."""
     model = Sequential()
-    model.add(Dense(1024, input_dim=100))
+    model.add(Dense(1024, batch_input_shape=(64, 100)))
     model.add(LeakyReLU())
     model.add(Dense(128 * 7 * 7))
-    model.add(BatchNormalization())
+    #model.add(BatchNormalization())
     model.add(LeakyReLU())
     model.add(Reshape((7, 7, 128), input_shape=(128 * 7 * 7,)))
     bn_axis = -1
     model.add(Conv2DTranspose(128, (5, 5), strides=2, padding='same'))
-    model.add(BatchNormalization(axis=bn_axis))
+    #model.add(BatchNormalization(axis=bn_axis))
     model.add(LeakyReLU())
     model.add(Convolution2D(64, (5, 5), padding='same'))
-    model.add(BatchNormalization(axis=bn_axis))
+    #model.add(BatchNormalization(axis=bn_axis))
     model.add(LeakyReLU())
     model.add(Conv2DTranspose(64, (5, 5), strides=2, padding='same'))
-    model.add(BatchNormalization(axis=bn_axis))
+    #model.add(BatchNormalization(axis=bn_axis))
     model.add(LeakyReLU())
     # Because we normalized training inputs to lie in the range [-1, 1],
     # the tanh function should be used for the output of the generator to ensure its output
@@ -45,7 +45,7 @@ def make_discriminator():
     as possible for real inputs.
     Note that the improved WGAN paper suggests that BatchNormalization should not be used in the discriminator."""
     model = Sequential()
-    model.add(Convolution2D(64, (5, 5), padding='same', input_shape=(28, 28, 1)))
+    model.add(Convolution2D(64, (5, 5), padding='same', batch_input_shape=(64, 28, 28, 1)))
     model.add(LeakyReLU())
     model.add(Convolution2D(128, (5, 5), kernel_initializer='he_normal', strides=[2, 2]))
     model.add(LeakyReLU())
@@ -68,9 +68,9 @@ class MNISTDataset(ArrayDataset):
         X = (X.astype(np.float32) - 127.5) / 127.5
         super(MNISTDataset, self).__init__(X, batch_size, noise_size)
         
-    def display(self, output_batch, input_batch = None, row=8, col=8):
-        batch = output_batch
-        image = super(MNISTDataset, self).display(batch, row, col)
+    def display(self, output_batch, input_batch=None):
+        batch = output_batch[0]
+        image = super(MNISTDataset, self).display(batch)
         image = (image * 127.5) + 127.5
         image = np.squeeze(np.round(image).astype(np.uint8))
         return image
@@ -80,9 +80,10 @@ def main():
     discriminator = make_discriminator()
 
     args = parser_with_default_args().parse_args()
+    args.training_ratio = 5
     dataset = MNISTDataset(args.batch_size)
-    gan = LSGAN(generator,
-                  discriminator, **vars(args))
+    gan = GAN(generator, discriminator, **vars(args))
+
     trainer = Trainer(dataset, gan, **vars(args))
     
     trainer.train()

@@ -11,7 +11,7 @@ class LSGAN(GAN):
                  discriminator_optimizer=Adam(0.0001, beta_1=.5, beta_2=0.9),
                     **kwargs):
         super(LSGAN, self).__init__(generator, discriminator, generator_optimizer=generator_optimizer,
-                                      discriminator_optimizer = discriminator_optimizer, **kwargs)
+                                      discriminator_optimizer=discriminator_optimizer, **kwargs)
 
     def _compile_generator_loss(self):
         def generator_least_square_loss(y_true, y_pred):
