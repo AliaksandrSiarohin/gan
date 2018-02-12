@@ -11,14 +11,13 @@ import numpy as np
 from layer_utils import resblock
 from keras_contrib.layers import InstanceNormalization
 
-
-"""CIFAR10 small images classification dataset.
-"""
+from inception_score import get_inception_score
 
 from keras.datasets.cifar import load_batch
 from keras.utils.data_utils import get_file
 from keras import backend as K
 import os
+from tqdm import tqdm
 
 
 def load_data():
@@ -63,7 +62,6 @@ def make_generator():
     y = resblock(y, (3, 3), 'UP', 128)
     y = resblock(y, (3, 3), 'UP', 128)
     y = resblock(y, (3, 3), 'UP', 128)
-
     y = BatchNormalization(axis=-1)(y)
     y = Activation('relu')(y)
     y = Conv2D(3, (3, 3), kernel_initializer='he_uniform', use_bias=False,
@@ -107,13 +105,26 @@ def main():
     generator = make_generator()
     discriminator = make_discriminator()
 
-    args = parser_with_default_args().parse_args()
-    dataset = CifarDataset(args.batch_size)
-    gan = WGAN_GP(generator,
-                  discriminator, **vars(args))
-    trainer = Trainer(dataset, gan, **vars(args))
+    parser = parser_with_default_args()
+    parser.add_argument("--phase", choices=['train', 'test'], default='train')
+    args = parser.parse_args()
+    if args.phase == 'train':
+        dataset = CifarDataset(args.batch_size)
+        gan = WGAN_GP(generator if args.generator_checkpoint is None else args.generator_checkpoint,
+                      discriminator if args.discriminator_checkpoint is None else args.discriminator_checkpoint, **vars(args))
+        trainer = Trainer(dataset, gan, **vars(args))
 
-    trainer.train()
+        trainer.train()
+    else:
+        generator.load_weights(filepath=args.generator_checkpoint)
+        dataset = CifarDataset(100)
+        images = np.empty((50000, 32, 32, 3))
+        for i in tqdm(range(0, 50000, 100)):
+            g_s = dataset.next_generator_sample()
+            images[i:(i+100)] = generator.predict(g_s)
+        images *= 127.5
+        images += 127.5
+        print(get_inception_score(images))
 
 if __name__ == "__main__":
     main()
