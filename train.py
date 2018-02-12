@@ -25,10 +25,10 @@ class Trainer(object):
         self.generator = gan.get_generator()
         self.discriminator = gan.get_discriminator()
 
-        self.generator_train_op, self.generator_train_op_inputs = gan.compile_generator_train_op()
-        self.discriminator_train_op, self.discriminator_train_op_inputs = gan.compile_discriminator_train_op()
-        self.generate_op, self.generate_op_input = gan.compile_generate_op()
-        self.validate_op, self.validate_op_input = gan.compile_validate_op()
+        self.generator_train_op = gan.compile_generator_train_op()
+        self.discriminator_train_op  = gan.compile_discriminator_train_op()
+        self.generate_op = gan.compile_generate_op()
+        self.validate_op = gan.compile_validate_op()
 
         self.batch_size = batch_size
         self.output_dir = output_dir
@@ -37,24 +37,12 @@ class Trainer(object):
         self.display_ratio = display_ratio
         self.checkpoint_ratio = checkpoint_ratio
 
-        self.session = K.get_session()
-
-
-    def run_operation(self, operation, symbolic_inputs, data, learning_phase=1):
-        feed_dict = dict(zip(symbolic_inputs, data))
-        feed_dict[K.learning_phase()] = learning_phase
-        out = self.session.run(operation, feed_dict)
-        if out[0] is None:
-            return out[1:]
-        else:
-            return out
-        
     def save_generated_images(self):
         if hasattr(self.dataset, 'next_generator_sample_test'):
             batch = self.dataset.next_generator_sample_test()
         else:
             batch = self.dataset.next_generator_sample()
-        gen_images = self.run_operation(self.generate_op, self.generate_op_input, batch)
+        gen_images = self.generate_op(batch + [True])
         image = self.dataset.display(gen_images, batch)
         title = "epoch_{}.png".format(str(self.current_epoch).zfill(3))
         if not os.path.exists(self.output_dir):
@@ -73,13 +61,11 @@ class Trainer(object):
         for j in range(self.training_ratio):
             discrimiantor_batch = self.dataset.next_discriminator_sample()
             generator_batch = self.dataset.next_generator_sample()
-            #All zeros as ground truth because it`s not used
-            loss = self.run_operation(self.discriminator_train_op, self.discriminator_train_op_inputs,
-                                      discrimiantor_batch + generator_batch)
+            loss = self.discriminator_train_op(discrimiantor_batch + generator_batch + [True])
             discriminator_loss_list.append(loss)
 
         generator_batch = self.dataset.next_generator_sample()
-        loss = self.run_operation(self.generator_train_op, self.generator_train_op_inputs, generator_batch)
+        loss = self.generator_train_op(generator_batch + [True])
         generator_loss_list.append(loss)
     
     def train_one_epoch(self, validation_epoch=False):
@@ -95,17 +81,17 @@ class Trainer(object):
                 print (err)
 
        
-            g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
-                                                                   np.mean(np.array(discriminator_loss_list), axis = 0))
-            print (g_loss_str)
-            print (d_loss_str)
+        g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
+                                                                    np.mean(np.array(discriminator_loss_list), axis = 0))
+        print (g_loss_str)
+        print (d_loss_str)
         
         if hasattr(self.dataset, 'next_generator_sample_test') and validation_epoch:
             print ("Validation...")
             validation_loss_list = []
             for _ in tqdm(range(int(self.dataset.number_of_batches_per_validation()))):
                     generator_batch = self.dataset.next_generator_sample_test()
-                    loss = self.run_operation(self.validate_op, self.validate_op_input, generator_batch)
+                    loss = self.validate_op(generator_batch + [1])
                     validation_loss_list.append(loss)
             val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis=0),
                                                                       np.mean(np.array(discriminator_loss_list), axis=0))
