@@ -1,10 +1,10 @@
 from keras.models import Sequential
-from keras.layers import Dense, Reshape, Flatten
+from keras.layers import Dense, Reshape, Flatten, Activation, Lambda
 from keras.layers.convolutional import Convolution2D, Conv2DTranspose
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 
-from lsgan import LSGAN
+from gan import GAN
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
 from train import Trainer
@@ -55,12 +55,11 @@ def make_discriminator():
     model.add(Dense(1024, kernel_initializer='he_normal'))
     model.add(LeakyReLU())
     model.add(Dense(1, kernel_initializer='he_normal'))
-    #model.add(Activation('sigmoid'))
 
     return model
 
 class MNISTDataset(ArrayDataset):
-    def __init__(self, batch_size, noise_size = (100, )):
+    def __init__(self, batch_size, noise_size=(100, )):
         from keras.datasets import mnist
         (X_train, y_train), (X_test, y_test) = mnist.load_data()
         X = np.concatenate((X_train, X_test), axis=0)
@@ -68,22 +67,22 @@ class MNISTDataset(ArrayDataset):
         X = (X.astype(np.float32) - 127.5) / 127.5
         super(MNISTDataset, self).__init__(X, batch_size, noise_size)
         
-    def display(self, output_batch, input_batch = None, row=8, col=8):
-        batch = output_batch
-        image = super(MNISTDataset, self).display(batch, row, col)
+    def display(self, output_batch, input_batch=None):
+        batch = output_batch[0]
+        image = super(MNISTDataset, self).display(batch)
         image = (image * 127.5) + 127.5
         image = np.squeeze(np.round(image).astype(np.uint8))
         return image
-
 
 def main():
     generator = make_generator()
     discriminator = make_discriminator()
 
     args = parser_with_default_args().parse_args()
+    #args.training_ratio = 5
     dataset = MNISTDataset(args.batch_size)
-    gan = LSGAN(generator,
-                  discriminator, **vars(args))
+    gan = GAN(generator, discriminator, **vars(args))
+
     trainer = Trainer(dataset, gan, **vars(args))
     
     trainer.train()

@@ -136,3 +136,5 @@ def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization):
         y = Add() ([shortcut, convpath])
         
     return y
+
+

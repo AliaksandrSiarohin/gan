@@ -1,8 +1,6 @@
 from keras.models import Input, Model
 from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePooling2D
-from keras.layers.normalization import BatchNormalization
 
-from gan import GAN
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
 from train import Trainer
@@ -11,14 +9,13 @@ import numpy as np
 from layer_utils import resblock
 from keras_contrib.layers import InstanceNormalization
 
-from inception_score import get_inception_score
-
 from keras.datasets.cifar import load_batch
 from keras.utils.data_utils import get_file
 from keras import backend as K
 import os
-from tqdm import tqdm
-
+from sklearn.utils import shuffle
+from conditional_layers import ConditionalInstanceNormalization
+from ac_gan import AC_GAN
 
 def load_data():
     """Loads CIFAR10 dataset.
@@ -53,20 +50,23 @@ def load_data():
 
 
 def make_generator():
-    """Creates a generator model that takes a 128-dimensional noise vector as a "seed", and outputs images
-    of size 128x64x3."""
-    x = Input((128, ))
+    x = Input(batch_shape=(64, 128, ))
+    cls = Input(batch_shape=(64, 1, ), dtype='int32')
+
     y = Dense(128 * 4 * 4)(x)
     y = Reshape((4, 4, 128))(y)
 
-    y = resblock(y, (3, 3), 'UP', 128)
-    y = resblock(y, (3, 3), 'UP', 128)
-    y = resblock(y, (3, 3), 'UP', 128)
-    y = BatchNormalization(axis=-1)(y)
+    conditional_instance_norm = lambda axis: (lambda inp: ConditionalInstanceNormalization(number_of_classes=10, axis=axis)([inp, cls]))
+
+    y = resblock(y, (3, 3), 'UP', 128, conditional_instance_norm)
+    y = resblock(y, (3, 3), 'UP', 128, conditional_instance_norm)
+    y = resblock(y, (3, 3), 'UP', 128, conditional_instance_norm)
+
+    y = conditional_instance_norm(axis=-1)(y)
     y = Activation('relu')(y)
     y = Conv2D(3, (3, 3), kernel_initializer='he_uniform', use_bias=False,
                       padding='same', activation='tanh')(y)
-    return Model(inputs=x, outputs=y)
+    return Model(inputs=[x, cls], outputs=y)
 
 
 def make_discriminator():
@@ -80,21 +80,40 @@ def make_discriminator():
     y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization)
 
     y = GlobalAveragePooling2D()(y)
+    cls_out = Dense(10, use_bias=False)(y)
     y = Dense(1, use_bias=False)(y)
 
-    return Model(inputs=x, outputs=y)
+    return Model(inputs=x, outputs=[y, cls_out])
 
 
 class CifarDataset(ArrayDataset):
     def __init__(self, batch_size, noise_size=(128, )):
         (X_train, y_train), (X_test, y_test) = load_data()
-        X = X_train# np.concatenate((X_train, X_test), axis=0)
-        print (X.shape)
+        X = X_train
         X = (X.astype(np.float32) - 127.5) / 127.5
         super(CifarDataset, self).__init__(X, batch_size, noise_size)
+        self._Y = y_train
+        self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
+
+    def number_of_batches_per_validation(self):
+        return 10
+
+    def next_generator_sample(self):
+        return [np.random.normal(size=(self._batch_size,) + self._noise_size),
+                np.random.choice(10, size=(self._batch_size, 1), p = self._cls_prob)]
+
+    def next_generator_sample_test(self):
+        return [np.random.normal(size=(self._batch_size,) + self._noise_size),
+                (np.arange(self._batch_size) % 10).reshape((self._batch_size,1))]
+
+    def _load_discriminator_data(self, index):
+        return [self._X[index], self._Y[index]]
+
+    def _shuffle_data(self):
+        self._X, self._Y = shuffle(self._X, self._Y)
 
     def display(self, output_batch, input_batch=None):
-        batch = output_batch
+        batch = output_batch[0]
         image = super(CifarDataset, self).display(batch)
         image = (image * 127.5) + 127.5
         image = np.squeeze(np.round(image).astype(np.uint8))
@@ -104,25 +123,13 @@ class CifarDataset(ArrayDataset):
 def main():
     generator = make_generator()
     discriminator = make_discriminator()
-    parser = parser_with_default_args()
-    parser.add_argument("--phase", choices=['train', 'test'], default='train')
-    args = parser.parse_args()
-    if args.phase == 'train':
-        dataset = CifarDataset(args.batch_size)
-        gan = WGAN_GP(generator if args.generator_checkpoint is None else args.generator_checkpoint,
-                      discriminator if args.discriminator_checkpoint is None else args.discriminator_checkpoint, **vars(args))
-        trainer = Trainer(dataset, gan, **vars(args))
 
-        trainer.train()
-    else:
-        generator.load_weights(filepath=args.generator_checkpoint)
-        dataset = CifarDataset(100)
-        images = np.empty((50000, 32, 32, 3))
-        for i in tqdm(range(0, 50000, 100)):
-            g_s = dataset.next_generator_sample()
-            images[i:(i+100)] = generator.predict(g_s)
-        images *= 127.5
-        images += 127.5
-        print(get_inception_score(images))
+    args = parser_with_default_args().parse_args()
+    dataset = CifarDataset(args.batch_size)
+    gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
+    trainer = Trainer(dataset, gan, **vars(args))
+
+    trainer.train()
+
 if __name__ == "__main__":
     main()

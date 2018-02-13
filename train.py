@@ -6,10 +6,10 @@ import pylab as plt
 import keras.backend as K
 assert K.image_data_format() == 'channels_last', "Backend should be tensorflow and data_format channel_last"
 from keras.backend import tf as ktf
-#config = ktf.ConfigProto()
-#config.gpu_options.allow_growth = True
-#session = ktf.Session(config=config)
-#K.set_session(session)
+config = ktf.ConfigProto()
+config.gpu_options.allow_growth = True
+session = ktf.Session(config=config)
+K.set_session(session)
 from tqdm import tqdm
 
 class Trainer(object):
@@ -21,19 +21,14 @@ class Trainer(object):
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs
         self.gan = gan
-        
-        generator_model, discriminator_model = gan.compile_models()
+
         self.generator = gan.get_generator()
         self.discriminator = gan.get_discriminator()
 
-        self.generator_model = generator_model
-        self.discriminator_model = discriminator_model
-
-        #Fake targets, used to bypass keras interface
-        self.disc_targets = np.zeros((batch_size, ) +
-                         tuple(np.ones(len(self.discriminator_model.output_shape) - 1, dtype='int32')))
-        self.gen_targets = np.zeros((batch_size, ) +
-                         tuple(np.ones(len(self.generator_model.output_shape) - 1, dtype='int32')))
+        self.generator_train_op = gan.compile_generator_train_op()
+        self.discriminator_train_op  = gan.compile_discriminator_train_op()
+        self.generate_op = gan.compile_generate_op()
+        self.validate_op = gan.compile_validate_op()
 
         self.batch_size = batch_size
         self.output_dir = output_dir
@@ -41,14 +36,14 @@ class Trainer(object):
         self.training_ratio = training_ratio
         self.display_ratio = display_ratio
         self.checkpoint_ratio = checkpoint_ratio
-        
-        
+
     def save_generated_images(self):
         if hasattr(self.dataset, 'next_generator_sample_test'):
             batch = self.dataset.next_generator_sample_test()
         else:
-            batch = self.dataset.next_generator_sample() 
-        image = self.dataset.display(self.generator.predict_on_batch(batch), batch)
+            batch = self.dataset.next_generator_sample()
+        gen_images = self.generate_op(batch + [True])
+        image = self.dataset.display(gen_images, batch)
         title = "epoch_{}.png".format(str(self.current_epoch).zfill(3))
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -66,13 +61,11 @@ class Trainer(object):
         for j in range(self.training_ratio):
             discrimiantor_batch = self.dataset.next_discriminator_sample()
             generator_batch = self.dataset.next_generator_sample()
-            #All zeros as ground truth because it`s not used
-            loss = self.discriminator_model.train_on_batch(
-                            discrimiantor_batch + generator_batch, self.disc_targets)
+            loss = self.discriminator_train_op(discrimiantor_batch + generator_batch + [True])
             discriminator_loss_list.append(loss)
 
         generator_batch = self.dataset.next_generator_sample()
-        loss = self.generator_model.train_on_batch(generator_batch, self.gen_targets)
+        loss = self.generator_train_op(generator_batch + [True])
         generator_loss_list.append(loss)
     
     def train_one_epoch(self, validation_epoch=False):
@@ -89,7 +82,7 @@ class Trainer(object):
 
        
         g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
-                                                               np.mean(np.array(discriminator_loss_list), axis = 0))        
+                                                                    np.mean(np.array(discriminator_loss_list), axis = 0))
         print (g_loss_str)
         print (d_loss_str)
         
@@ -98,7 +91,7 @@ class Trainer(object):
             validation_loss_list = []
             for _ in tqdm(range(int(self.dataset.number_of_batches_per_validation()))):
                     generator_batch = self.dataset.next_generator_sample_test()
-                    loss = self.generator_model.test_on_batch(generator_batch, np.zeros([self.batch_size]))
+                    loss = self.validate_op(generator_batch + [1])
                     validation_loss_list.append(loss)
             val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis=0),
                                                                       np.mean(np.array(discriminator_loss_list), axis=0))
