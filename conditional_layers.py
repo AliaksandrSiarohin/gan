@@ -113,21 +113,23 @@ class ConditionalInstanceNormalization(Layer):
         if (self.axis is not None):
             del reduction_axes[self.axis]
 
-        del reduction_axes[0]
+        #del reduction_axes[0]
 
         mean = K.mean(inputs, reduction_axes, keepdims=True)
         stddev = K.std(inputs, reduction_axes, keepdims=True) + self.epsilon
         normed = (inputs - mean) / stddev
 
         broadcast_shape = [1] * len(input_shape)
-        broadcast_shape[0] = K.shape(inputs)[0]
+        #broadcast_shape[0] = K.shape(inputs)[0]
         if self.axis is not None:
             broadcast_shape[self.axis] = input_shape[self.axis]
 
         if self.scale:
+            broadcast_shape[0] = K.shape(inputs)[0]
             broadcast_gamma = K.reshape(K.gather(self.gamma, class_labels), broadcast_shape)
             normed = normed * broadcast_gamma
         if self.center:
+            broadcast_shape[0] = K.shape(inputs)[0]
             broadcast_beta = K.reshape(K.gather(self.beta, class_labels), broadcast_shape)
             normed = normed + broadcast_beta
         return normed

@@ -16,11 +16,14 @@ class Trainer(object):
     def __init__(self, dataset, gan, output_dir = 'output/generated_samples',
                  checkpoints_dir='output/checkpoints', training_ratio=5,
                  display_ratio=1, checkpoint_ratio=10, start_epoch=0,
-                 number_of_epochs=100, batch_size=64, **kwargs):
+                 number_of_epochs=100, batch_size=64, generator_batch_multiple=2,
+                 at_store_checkpoint_hook = None, **kwargs):
         self.dataset = dataset
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs
         self.gan = gan
+        self.gen_batch_mul = generator_batch_multiple
+        self.at_store_checkpoint_hook = at_store_checkpoint_hook
 
         self.generator = gan.get_generator()
         self.discriminator = gan.get_discriminator()
@@ -52,6 +55,7 @@ class Trainer(object):
     def make_checkpoint(self):
         g_title = "epoch_{}_generator.h5".format(str(self.current_epoch).zfill(3))
         d_title = "epoch_{}_discriminator.h5".format(str(self.current_epoch).zfill(3))
+        self.at_store_checkpoint_hook()
         if not os.path.exists(self.checkpoints_dir):
             os.makedirs(self.checkpoints_dir)
         self.discriminator.save(os.path.join(self.checkpoints_dir, d_title))
@@ -64,7 +68,13 @@ class Trainer(object):
             loss = self.discriminator_train_op(discrimiantor_batch + generator_batch + [True])
             discriminator_loss_list.append(loss)
 
-        generator_batch = self.dataset.next_generator_sample()
+        if self.gen_batch_mul != 1:
+            generator_batch = []
+            for i in range(self.gen_batch_mul):
+                generator_batch.append(self.dataset.next_generator_sample())
+            generator_batch = [np.concatenate(l, axis=0) for l in zip(*generator_batch)]
+        else:
+            generator_batch = self.dataset.next_generator_sample()
         loss = self.generator_train_op(generator_batch + [True])
         generator_loss_list.append(loss)
     
@@ -82,7 +92,7 @@ class Trainer(object):
 
        
         g_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(generator_loss_list), axis = 0),
-                                                                    np.mean(np.array(discriminator_loss_list), axis = 0))
+                                                                        np.mean(np.array(discriminator_loss_list), axis = 0))
         print (g_loss_str)
         print (d_loss_str)
         
@@ -101,7 +111,7 @@ class Trainer(object):
         while (self.current_epoch < self.last_epoch):            
             if (self.current_epoch + 1) % self.display_ratio == 0:
                 self.save_generated_images()
-            if (self.current_epoch + 1) % self.checkpoint_ratio == 0:
-                self.make_checkpoint()     
             self.train_one_epoch((((self.current_epoch + 1) % self.checkpoint_ratio == 0) or self.current_epoch==0))
             self.current_epoch += 1
+            if (self.current_epoch - 1) % self.checkpoint_ratio == 0:
+                self.make_checkpoint()

@@ -109,7 +109,7 @@ def main():
     args = parser.parse_args()
     if args.phase == 'train':
         dataset = CifarDataset(args.batch_size)
-        gan = WGAN_GP(generator if args.generator_checkpoint is None else args.generator_checkpoint,
+        gan = GAN(generator if args.generator_checkpoint is None else args.generator_checkpoint,
                       discriminator if args.discriminator_checkpoint is None else args.discriminator_checkpoint, **vars(args))
         trainer = Trainer(dataset, gan, **vars(args))
 

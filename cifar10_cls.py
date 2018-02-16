@@ -1,5 +1,5 @@
 from keras.models import Input, Model
-from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePooling2D
+from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePooling2D, BatchNormalization, UpSampling2D, Add, AveragePooling2D
 
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
@@ -14,8 +14,10 @@ from keras.utils.data_utils import get_file
 from keras import backend as K
 import os
 from sklearn.utils import shuffle
-from conditional_layers import ConditionalInstanceNormalization
+from conditional_layers import ConditionalInstanceNormalization, ConditionalConv2D
 from ac_gan import AC_GAN
+from tqdm import tqdm
+from inception_score import get_inception_score
 
 def load_data():
     """Loads CIFAR10 dataset.
@@ -49,9 +51,9 @@ def load_data():
     return (x_train, y_train), (x_test, y_test)
 
 
-def make_generator():
-    x = Input(batch_shape=(64, 128, ))
-    cls = Input(batch_shape=(64, 1, ), dtype='int32')
+def make_generator_ci():
+    x = Input((128, ))
+    cls = Input((1, ), dtype='int32')
 
     y = Dense(128 * 4 * 4)(x)
     y = Reshape((4, 4, 128))(y)
@@ -62,9 +64,9 @@ def make_generator():
     y = resblock(y, (3, 3), 'UP', 128, conditional_instance_norm)
     y = resblock(y, (3, 3), 'UP', 128, conditional_instance_norm)
 
-    y = conditional_instance_norm(axis=-1)(y)
+    y = BatchNormalization(axis=-1)(y)
     y = Activation('relu')(y)
-    y = Conv2D(3, (3, 3), kernel_initializer='he_uniform', use_bias=False,
+    y = Conv2D(3, (3, 3), kernel_initializer='he_uniform', use_bias=True,
                       padding='same', activation='tanh')(y)
     return Model(inputs=[x, cls], outputs=y)
 
@@ -74,14 +76,16 @@ def make_discriminator():
     the input is real or generated."""
     x = Input((32, 32, 3))
 
-    y = resblock(x, (3, 3), 'DOWN', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'DOWN', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization)
+    y = resblock(x, (3, 3), 'DOWN', 128, norm=None, is_first=True)
+    y = resblock(y, (3, 3), 'DOWN', 128, norm=None)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False)
+
+    y = Activation('relu')(y)
 
     y = GlobalAveragePooling2D()(y)
-    cls_out = Dense(10, use_bias=False)(y)
-    y = Dense(1, use_bias=False)(y)
+    cls_out = Dense(10, use_bias=True)(y)
+    y = Dense(1, use_bias=True)(y)
 
     return Model(inputs=x, outputs=[y, cls_out])
 
@@ -91,16 +95,20 @@ class CifarDataset(ArrayDataset):
         (X_train, y_train), (X_test, y_test) = load_data()
         X = X_train
         X = (X.astype(np.float32) - 127.5) / 127.5
+        X += np.random.uniform(0, 1/128.0, size=X.shape)
         super(CifarDataset, self).__init__(X, batch_size, noise_size)
         self._Y = y_train
         self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
+
+    def number_of_batches_per_epoch(self):
+        return 1000
 
     def number_of_batches_per_validation(self):
         return 10
 
     def next_generator_sample(self):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size),
-                np.random.choice(10, size=(self._batch_size, 1), p = self._cls_prob)]
+                np.random.choice(10, size=(self._batch_size, 1), p=self._cls_prob)]
 
     def next_generator_sample_test(self):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size),
@@ -121,15 +129,36 @@ class CifarDataset(ArrayDataset):
 
 
 def main():
-    generator = make_generator()
+    generator = make_generator_ci()
     discriminator = make_discriminator()
 
-    args = parser_with_default_args().parse_args()
-    dataset = CifarDataset(args.batch_size)
-    gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
-    trainer = Trainer(dataset, gan, **vars(args))
+    print (generator.summary())
+    print (discriminator.summary())
 
-    trainer.train()
+    parser = parser_with_default_args()
+    parser.add_argument("--phase", choices=['train', 'test'], default='train')
+    parser.add_argument("--generator_batch_multiple", default=2, type=int,
+                        help="Size of the generator batch, multiple of batch_size.")
+    args = parser.parse_args()
+
+    def compute_inception_score():
+        images = np.empty((50000, 32, 32, 3))
+        dataset._batch_size = 100
+        for i in tqdm(range(0, 50000, 100)):
+            g_s = dataset.next_generator_sample()
+            images[i:(i+100)] = generator.predict(g_s)
+        images *= 127.5
+        images += 127.5
+        print(get_inception_score(images))
+        dataset._batch_size = args.batch_size
+
+    if args.phase == 'train':
+        dataset = CifarDataset(args.batch_size)
+        gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
+        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score, **vars(args))
+        trainer.train()
+
+
 
 if __name__ == "__main__":
     main()
