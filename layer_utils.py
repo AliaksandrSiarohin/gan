@@ -7,6 +7,7 @@ from keras.backend import tf as ktf
 from keras.engine.topology import Layer
 from keras.models import Input, Model
 from keras import backend as K
+from functools import partial
 
 import numpy as np
 
@@ -81,7 +82,22 @@ class GaussianFromPointsLayer(Layer):
         config = {"sigma": self.sigma, "image_size": self.image_size}
         base_config = super(GaussianFromPointsLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
-    
+
+
+def uniform_init(shape, constant = 4.0):
+    if len(shape) == 4:
+        stdev = np.sqrt(constant / ((shape[1] ** 2) * (shape[2] + shape[3])))
+    else:
+        stdev = np.sqrt(constant / (shape[0] + shape[1]))
+    return np.random.uniform(
+                low=-stdev * np.sqrt(3),
+                high=stdev * np.sqrt(3),
+                size=shape
+            ).astype('float32')
+
+he_init = partial(uniform_init, constant=4.0)
+glorot_init = partial(uniform_init, constant=2.0)
+
 
 def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization, is_first=False, conv_shortcut=True):
     assert resample in ["UP", "SAME", "DOWN"]
@@ -91,27 +107,27 @@ def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization, is_fir
         norm = lambda axis: lambda x: x ##Identity, no normalization
 
     if resample == "UP":
-        shortcut = UpSampling2D(size=(2, 2)) (x)        
+        shortcut = UpSampling2D(size=(2, 2)) (x)
         shortcut = Conv2D(nfilters, (1, 1), padding = 'same',
-                          kernel_initializer='he_uniform', use_bias = True) (shortcut)
+                          kernel_initializer=glorot_init, use_bias = True) (shortcut)
 
         convpath = x
         if not is_first:
             convpath = norm(axis=feature_axis)(convpath)
             convpath = Activation('relu') (convpath)
         convpath = UpSampling2D(size=(2, 2))(convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                       use_bias=True, padding='same')(convpath)
         convpath = norm(axis=feature_axis)(convpath)
         convpath = Activation('relu')(convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                      use_bias=True, padding='same') (convpath)
-        
+
         y = Add() ([shortcut, convpath])
     elif resample == "SAME":
         if conv_shortcut:
             shortcut = Conv2D(nfilters, (1, 1), padding = 'same',
-                              kernel_initializer='he_uniform', use_bias = True) (x)
+                              kernel_initializer=glorot_init, use_bias = True) (x)
         else:
             shortcut = x
 
@@ -119,36 +135,36 @@ def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization, is_fir
         if not is_first:
             convpath = norm(axis=feature_axis)(convpath)
             convpath = Activation('relu') (convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform', 
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                  use_bias=True, padding='same')(convpath)
         convpath = norm(axis=feature_axis)(convpath)
         convpath = Activation('relu') (convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                  use_bias=True, padding='same') (convpath)
-        
+
         y = Add() ([shortcut, convpath])
-        
+
     else:
         if not is_first:
-            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer='he_uniform',
+            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer=glorot_init,
                               padding = 'same', use_bias=True) (x)
             shortcut = AveragePooling2D(pool_size=(2, 2))(shortcut)
         else:
             shortcut = AveragePooling2D(pool_size=(2, 2))(x)
-            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer='he_uniform',
+            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer=he_init,
                               padding = 'same', use_bias=True) (shortcut)
 
-        
+
         convpath = x
         if not is_first:
             convpath = norm(axis=feature_axis)(convpath)
             convpath = Activation('relu') (convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                  use_bias=True, padding='same')(convpath)
         if not  is_first:
             convpath = norm(axis=feature_axis)(convpath)
         convpath = Activation('relu') (convpath)
-        convpath = Conv2D(nfilters, kernel_size, kernel_initializer='he_uniform',
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
                                  use_bias=True, padding='same') (convpath)
         convpath = AveragePooling2D(pool_size = (2, 2))(convpath)
         y = Add() ([shortcut, convpath])

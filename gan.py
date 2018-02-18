@@ -7,8 +7,8 @@ from keras.backend import function
 
 class GAN(object):
     def __init__(self, generator, discriminator,
-                 generator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
-                 discriminator_optimizer=Adam(0.0001, beta_1=0, beta_2=0.9),
+                 generator_optimizer=Adam(2e-4, beta_1=0, beta_2=0.9),
+                 discriminator_optimizer=Adam(2e-4, beta_1=0, beta_2=0.9),
                  generator_adversarial_objective='ns-gan',
                  discriminator_adversarial_objective='ns-gan',
                  gradient_penalty_weight=10,

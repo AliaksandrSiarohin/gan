@@ -3,10 +3,12 @@ from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePoolin
 
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
+
 from train import Trainer
+from inception_score import get_inception_score
 
 import numpy as np
-from layer_utils import resblock
+from layer_utils import resblock, glorot_init
 from keras_contrib.layers import InstanceNormalization
 
 from keras.datasets.cifar import load_batch
@@ -17,7 +19,7 @@ from sklearn.utils import shuffle
 from conditional_layers import ConditionalInstanceNormalization, ConditionalConv2D
 from ac_gan import AC_GAN
 from tqdm import tqdm
-from inception_score import get_inception_score
+
 
 def load_data():
     """Loads CIFAR10 dataset.
@@ -55,7 +57,7 @@ def make_generator_ci():
     x = Input((128, ))
     cls = Input((1, ), dtype='int32')
 
-    y = Dense(128 * 4 * 4)(x)
+    y = Dense(128 * 4 * 4, kernel_initializer=glorot_init)(x)
     y = Reshape((4, 4, 128))(y)
 
     conditional_instance_norm = lambda axis: (lambda inp: ConditionalInstanceNormalization(number_of_classes=10, axis=axis)([inp, cls]))
@@ -66,7 +68,7 @@ def make_generator_ci():
 
     y = BatchNormalization(axis=-1)(y)
     y = Activation('relu')(y)
-    y = Conv2D(3, (3, 3), kernel_initializer='he_uniform', use_bias=True,
+    y = Conv2D(3, (3, 3), kernel_initializer=glorot_init, use_bias=True,
                       padding='same', activation='tanh')(y)
     return Model(inputs=[x, cls], outputs=y)
 
@@ -84,8 +86,8 @@ def make_discriminator():
     y = Activation('relu')(y)
 
     y = GlobalAveragePooling2D()(y)
-    cls_out = Dense(10, use_bias=True)(y)
-    y = Dense(1, use_bias=True)(y)
+    cls_out = Dense(10, use_bias=True, kernel_initializer=glorot_init)(y)
+    y = Dense(1, use_bias=True, kernel_initializer=glorot_init)(y)
 
     return Model(inputs=x, outputs=[y, cls_out])
 
@@ -107,18 +109,23 @@ class CifarDataset(ArrayDataset):
         return 10
 
     def next_generator_sample(self):
+        ### Use current discriminator labels because for wgan-gp it is important to have the same labels in interpolation
         return [np.random.normal(size=(self._batch_size,) + self._noise_size),
-                np.random.choice(10, size=(self._batch_size, 1), p=self._cls_prob)]
+                self.current_discriminator_labels]
 
     def next_generator_sample_test(self):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size),
                 (np.arange(self._batch_size) % 10).reshape((self._batch_size,1))]
 
     def _load_discriminator_data(self, index):
-        return [self._X[index], self._Y[index]]
+        self.current_discriminator_labels = self._Y[index]
+        return [self._X[index], self.current_discriminator_labels]
 
     def _shuffle_data(self):
+        x_shape = self._X.shape
+        self._X = self._X.reshape((x_shape[0], -1))
         self._X, self._Y = shuffle(self._X, self._Y)
+        self._X = self._X.reshape(x_shape)
 
     def display(self, output_batch, input_batch=None):
         batch = output_batch[0]
@@ -145,7 +152,7 @@ def main():
         images = np.empty((50000, 32, 32, 3))
         dataset._batch_size = 100
         for i in tqdm(range(0, 50000, 100)):
-            g_s = dataset.next_generator_sample()
+            g_s = dataset.next_generator_sample_test()
             images[i:(i+100)] = generator.predict(g_s)
         images *= 127.5
         images += 127.5
@@ -155,7 +162,7 @@ def main():
     if args.phase == 'train':
         dataset = CifarDataset(args.batch_size)
         gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
-        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score, **vars(args))
+        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score,  lr_decay_shedule='linear', **vars(args))
         trainer.train()
 
 

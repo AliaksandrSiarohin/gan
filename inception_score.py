@@ -35,9 +35,10 @@ def get_inception_score(images, splits=10):
   with tf.Session() as sess:
     preds = []
     n_batches = int(math.ceil(float(len(inps)) / float(bs)))
+    print ("Computing inception score!!!")
     for i in range(n_batches):
-        sys.stdout.write(".")
-        sys.stdout.flush()
+#        sys.stdout.write(".")
+#        sys.stdout.flush()
         inp = inps[(i * bs):min((i + 1) * bs, len(inps))]
         inp = np.concatenate(inp, 0)
         pred = sess.run(softmax, {'ExpandDims:0': inp})
