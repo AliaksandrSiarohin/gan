@@ -1,5 +1,6 @@
 from keras.models import Input, Model
 from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePooling2D, BatchNormalization, UpSampling2D, Add, AveragePooling2D
+from keras.optimizers import Adam
 
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
@@ -8,7 +9,7 @@ from train import Trainer
 from inception_score import get_inception_score
 
 import numpy as np
-from layer_utils import resblock, glorot_init
+from layer_utils import resblock, glorot_init, he_init
 from keras_contrib.layers import InstanceNormalization
 
 from keras.datasets.cifar import load_batch
@@ -53,6 +54,58 @@ def load_data():
     return (x_train, y_train), (x_test, y_test)
 
 
+def condresblock(x, cls, kernel_size, resample, nfilters, norm=BatchNormalization, number_of_classes=10,
+                 is_first=False, conv_shortcut=True):
+    assert resample in ["UP", "SAME", "DOWN"]
+
+    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
+    if norm is None:
+        norm = lambda axis: lambda x: x ##Identity, no normalization
+
+    shortcut = UpSampling2D(size=(2, 2)) (x)
+    shortcut = Conv2D(nfilters, kernel_size=(1, 1), padding='same',
+                                    kernel_initializer=glorot_init, use_bias = True) (shortcut)
+
+    convpath = x
+    if not is_first:
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu') (convpath)
+    convpath = UpSampling2D(size=(2, 2))(convpath)
+    convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                      use_bias=True, padding='same')(convpath)
+
+    convpath = norm(axis=feature_axis)(convpath)
+    convpath = Activation('relu')(convpath)
+
+    convpath = ConditionalConv2D(nfilters, (1, 1), number_of_classes=number_of_classes,
+                                     kernel_initializer=glorot_init, use_bias=True, padding='same')([convpath, cls])
+
+    convpath = norm(axis=feature_axis)(convpath)
+    convpath = Activation('relu')(convpath)
+    convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                     use_bias=True, padding='same') (convpath)
+
+    y = Add() ([shortcut, convpath])
+    return y
+
+
+def make_generator_separated():
+    x = Input((128, ))
+    cls = Input((1, ), dtype='int32')
+
+    y = Dense(128 * 4 * 4, kernel_initializer=glorot_init)(x)
+    y = Reshape((4, 4, 128))(y)
+
+    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
+    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
+    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
+
+    y = BatchNormalization(axis=-1)(y)
+    y = Activation('relu')(y)
+    y = Conv2D(3, (3, 3), kernel_initializer=glorot_init, use_bias=True, padding='same', activation='tanh')(y)
+    return Model(inputs=[x, cls], outputs=y)
+
+
 def make_generator_ci():
     x = Input((128, ))
     cls = Input((1, ), dtype='int32')
@@ -71,7 +124,6 @@ def make_generator_ci():
     y = Conv2D(3, (3, 3), kernel_initializer=glorot_init, use_bias=True,
                       padding='same', activation='tanh')(y)
     return Model(inputs=[x, cls], outputs=y)
-
 
 def make_discriminator():
     """Creates a discriminator model that takes an image as input and outputs a single value, representing whether
@@ -136,7 +188,7 @@ class CifarDataset(ArrayDataset):
 
 
 def main():
-    generator = make_generator_ci()
+    generator = make_generator_separated()
     discriminator = make_discriminator()
 
     print (generator.summary())
@@ -146,7 +198,11 @@ def main():
     parser.add_argument("--phase", choices=['train', 'test'], default='train')
     parser.add_argument("--generator_batch_multiple", default=2, type=int,
                         help="Size of the generator batch, multiple of batch_size.")
+    parser.add_argument("--lr", default=2e-4, type=float, help="Learning rate")
     args = parser.parse_args()
+
+    args.generator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
+    args.discriminator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
 
     def compute_inception_score():
         images = np.empty((50000, 32, 32, 3))

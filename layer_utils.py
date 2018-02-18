@@ -85,7 +85,7 @@ class GaussianFromPointsLayer(Layer):
 
 
 def uniform_init(shape, constant = 4.0):
-    if len(shape) == 4:
+    if len(shape) >= 4:
         stdev = np.sqrt(constant / ((shape[1] ** 2) * (shape[2] + shape[3])))
     else:
         stdev = np.sqrt(constant / (shape[0] + shape[1]))
