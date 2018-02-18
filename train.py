@@ -54,7 +54,7 @@ class Trainer(object):
             number_of_itrations = self.last_epoch * number_of_batches_per_epoch
             start_iteration = start_epoch * number_of_batches_per_epoch
 
-            self.lr_decay_shedule = lambda x: max(0.1,
+            self.lr_decay_shedule = lambda x: max(0.01,
                 1 - float(x + start_iteration) / number_of_itrations)
 
 
