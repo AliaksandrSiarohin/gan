@@ -120,17 +120,29 @@ class GAN(object):
             batch_size = ktf.shape(self.discriminator_input)[0]
             ranks = [len(self.discriminator_input.get_shape().as_list())]
 
+        def cast_all(values, reference_type_vals):
+            return [ktf.cast(alpha, dtype=ref.dtype) for alpha, ref in zip(values, reference_type_vals)]
+
+        def std_if_not_int(val):
+            if val.dtype.is_integer:
+                return 0
+            else:
+                return ktf.stop_gradient(K.std(val, keepdims=True))
+
         def point_for_gp_wgan():
             weights = ktf.random_uniform((batch_size, 1), minval=0, maxval=1)
             weights = [ktf.reshape(weights, (-1, ) + (1, ) * (rank - 1)) for rank in ranks]
+            weights = cast_all(weights, self.discriminator_input)
             points = [(w * r) + ((1 - w) * f) for r, f, w in zip(self.discriminator_input, self.generator_output, weights)]
             return points
 
         def points_for_dragan():
             alphas = ktf.random_uniform((batch_size, 1), minval=0, maxval=1)
             alphas = [ktf.reshape(alphas, (-1, ) + (1, ) * (rank - 1)) for rank in ranks]
-            fake = [ktf.random_uniform(ktf.shape(t), minval=0, maxval=1) * ktf.stop_gradient(K.std(t, keepdims=True)) * 0.5
+            alphas = cast_all(alphas, self.discriminator_input)
+            fake = [ktf.random_uniform(ktf.shape(t), minval=0, maxval=1) * std_if_not_int(t) * 0.5
                        for t in self.discriminator_input]
+            fake = cast_all(fake, self.discriminator_input)
 
             points = [(w * r) + ((1 - w) * f) for r, f, w in zip(self.discriminator_input, fake, alphas)]
             return points
@@ -145,6 +157,8 @@ class GAN(object):
         gradients = ktf.gradients(disc_out[0], points)
 
         for gradient in gradients:
+            if gradient is None:
+                continue
             gradient = ktf.reshape(gradient, (batch_size, -1))
             gradient_l2_norm = ktf.sqrt(ktf.reduce_sum(ktf.square(gradient), axis=1))
             gradient_penalty = self.gradient_penalty_weight * ktf.square(1 - gradient_l2_norm)
