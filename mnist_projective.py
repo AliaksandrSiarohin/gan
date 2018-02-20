@@ -5,6 +5,7 @@ from keras.layers.convolutional import Conv2D
 from layer_utils import resblock, glorot_init, he_init
 from gan import GAN
 from ac_gan import AC_GAN
+from projective_gan import ProjectiveGAN
 from dataset import ArrayDataset
 from cmd import parser_with_default_args
 from train import Trainer
@@ -141,6 +142,22 @@ def make_spectral_discriminator():
 
     return Model(inputs=[x], outputs=[y, cls_out])
 
+def make_sep_spectral_discriminator():
+    from spectral_normalized_layers import SNConv2D, SNDense, SNConditionalConv11
+    x = Input((28, 28, 1))
+    cls = Input((1, ), dtype='int32')
+
+    y = cond_resblock(x, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, is_first=True, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+
+    y = Activation('relu')(y)
+
+    y = GlobalAveragePooling2D()(y)
+    y = SNDense(1, use_bias=True, kernel_initializer=glorot_init)(y)
+
+    return Model(inputs=[x, cls], outputs=[y])
 
 
 class MNISTDataset(ArrayDataset):
@@ -180,16 +197,10 @@ class MNISTDataset(ArrayDataset):
         image = np.squeeze(np.round(image).astype(np.uint8))
         return image
 
-class ProjectiveGAN(GAN):
-    def compile_intermediate_variables(self):
-        self.generator_output = [self.generator(self.generator_input), self.generator_input[1]]
-        self.discriminator_fake_output = self.discriminator(self.generator_output)
-        self.discriminator_real_output = self.discriminator(self.discriminator_input)
-
 
 def main():
     generator = make_generator_resnet_ci()
-    discriminator = make_spectral_discriminator()
+    discriminator = make_discriminator_resnet_sep()
 
     generator.summary()
     discriminator.summary()
@@ -197,7 +208,7 @@ def main():
     args = parser_with_default_args().parse_args()
     dataset = MNISTDataset(args.batch_size)
 
-    gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
+    gan = ProjectiveGAN(generator=generator, discriminator=discriminator, **vars(args))
     trainer = Trainer(dataset, gan, **vars(args))
 
     trainer.train()
