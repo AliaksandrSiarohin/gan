@@ -201,6 +201,11 @@ def main():
     parser.add_argument("--lr", default=2e-4, type=float, help="Learning rate")
     args = parser.parse_args()
 
+    if args.generator_checkpoint is not None:
+	generator.load_weights(args.generator_checkpoint)
+    if args.discriminator_checkpoint is not None:
+	discriminator.load_weights(args.discriminator_checkpoint)
+
     args.generator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
     args.discriminator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
 
