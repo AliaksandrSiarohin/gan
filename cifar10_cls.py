@@ -17,8 +17,9 @@ from keras.utils.data_utils import get_file
 from keras import backend as K
 import os
 from sklearn.utils import shuffle
-from conditional_layers import ConditionalInstanceNormalization, cond_resblock
+from conditional_layers import ConditionalInstanceNormalization, cond_resblock, ConditionalConv11
 from ac_gan import AC_GAN
+from projective_gan import ProjectiveGAN
 from tqdm import tqdm
 
 
@@ -114,34 +115,34 @@ def make_spectral_discriminator():
     from spectral_normalized_layers import SNConv2D, SNDense
     x = Input((32, 32, 3))
 
-    y = resblock(x, (3, 3), 'DOWN', 128, norm=None, is_first=True, conv_layer=SNConv2D)
-    y = resblock(y, (3, 3), 'DOWN', 128, norm=None, conv_layer=SNConv2D)
-    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=SNConv2D)
-    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=SNConv2D)
+    y = resblock(x, (3, 3), 'DOWN', 128, norm=None, is_first=True, conv_layer=Conv2D)
+    y = resblock(y, (3, 3), 'DOWN', 128, norm=None, conv_layer=Conv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=Conv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=Conv2D)
 
     y = Activation('relu')(y)
 
     y = GlobalAveragePooling2D()(y)
-    cls_out = SNDense(units=10, use_bias=True, kernel_initializer=glorot_init)(y)
-    y = SNDense(units=1, use_bias=True, kernel_initializer=glorot_init)(y)
+    cls_out = Dense(units=10, use_bias=True, kernel_initializer=glorot_init)(y)
+    y = Dense(units=1, use_bias=True, kernel_initializer=glorot_init)(y)
 
     return Model(inputs=[x], outputs=[y, cls_out])
 
 
 def make_sep_spectral_discriminator():
     from spectral_normalized_layers import SNConv2D, SNDense, SNConditionalConv11
-    x = Input((28, 28, 1))
+    x = Input((32, 32, 3))
     cls = Input((1, ), dtype='int32')
 
-    y = cond_resblock(x, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, is_first=True, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
-    y = cond_resblock(y, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
-    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
-    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(x, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, is_first=True, conv_layer=Conv2D, cond_conv_layer=ConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, conv_layer=Conv2D, cond_conv_layer=ConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=Conv2D, cond_conv_layer=ConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=Conv2D, cond_conv_layer=ConditionalConv11)
 
     y = Activation('relu')(y)
 
     y = GlobalAveragePooling2D()(y)
-    y = SNDense(1, use_bias=True, kernel_initializer=glorot_init)(y)
+    y = Dense(units=1, use_bias=True, kernel_initializer=glorot_init)(y)
 
     return Model(inputs=[x, cls], outputs=[y])
 
@@ -191,8 +192,8 @@ class CifarDataset(ArrayDataset):
 
 
 def main():
-    generator = make_generator_ci()
-    discriminator = make_spectral_discriminator()
+    generator = make_generator_separated()
+    discriminator = make_sep_spectral_discriminator()
 
     print (generator.summary())
     print (discriminator.summary())
@@ -205,9 +206,9 @@ def main():
     args = parser.parse_args()
 
     if args.generator_checkpoint is not None:
-	generator.load_weights(args.generator_checkpoint)
+        generator.load_weights(args.generator_checkpoint)
     if args.discriminator_checkpoint is not None:
-	discriminator.load_weights(args.discriminator_checkpoint)
+        discriminator.load_weights(args.discriminator_checkpoint)
 
     args.generator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
     args.discriminator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
@@ -225,8 +226,8 @@ def main():
 
     if args.phase == 'train':
         dataset = CifarDataset(args.batch_size)
-        gan = AC_GAN(generator=generator, discriminator=discriminator, **vars(args))
-        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score,  lr_decay_shedule='linear', **vars(args))
+        gan = ProjectiveGAN(generator=generator, discriminator=discriminator, **vars(args))
+        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score,  **vars(args))
         trainer.train()
 
 
