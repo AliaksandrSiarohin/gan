@@ -4,7 +4,7 @@ from keras.models import Input
 
 
 class AC_GAN(GAN):
-    def __init__(self, ce_weight_generator=0.1, ce_weight_discriminator=1, classify_generated=False, **kwargs):
+    def __init__(self, ce_weight_generator=1, ce_weight_discriminator=1, classify_generated=False, **kwargs):
         super(AC_GAN, self).__init__(**kwargs)
         self.ce_weight_generator = ce_weight_generator
         self.ce_weight_discriminator = ce_weight_discriminator

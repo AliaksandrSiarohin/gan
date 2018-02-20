@@ -17,7 +17,7 @@ from keras.utils.data_utils import get_file
 from keras import backend as K
 import os
 from sklearn.utils import shuffle
-from conditional_layers import ConditionalInstanceNormalization, ConditionalConv2D
+from conditional_layers import ConditionalInstanceNormalization, cond_resblock
 from ac_gan import AC_GAN
 from tqdm import tqdm
 
@@ -54,41 +54,6 @@ def load_data():
     return (x_train, y_train), (x_test, y_test)
 
 
-def condresblock(x, cls, kernel_size, resample, nfilters, norm=BatchNormalization, number_of_classes=10,
-                 is_first=False, conv_shortcut=True):
-    assert resample in ["UP", "SAME", "DOWN"]
-
-    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
-    if norm is None:
-        norm = lambda axis: lambda x: x ##Identity, no normalization
-
-    shortcut = UpSampling2D(size=(2, 2)) (x)
-    shortcut = Conv2D(nfilters, kernel_size=(1, 1), padding='same',
-                                    kernel_initializer=glorot_init, use_bias = True) (shortcut)
-
-    convpath = x
-    if not is_first:
-        convpath = norm(axis=feature_axis)(convpath)
-        convpath = Activation('relu') (convpath)
-    convpath = UpSampling2D(size=(2, 2))(convpath)
-    convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
-                                      use_bias=True, padding='same')(convpath)
-
-    convpath = norm(axis=feature_axis)(convpath)
-    convpath = Activation('relu')(convpath)
-
-    convpath = ConditionalConv2D(nfilters, (1, 1), number_of_classes=number_of_classes,
-                                     kernel_initializer=glorot_init, use_bias=True, padding='same')([convpath, cls])
-
-    convpath = norm(axis=feature_axis)(convpath)
-    convpath = Activation('relu')(convpath)
-    convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
-                                     use_bias=True, padding='same') (convpath)
-
-    y = Add() ([shortcut, convpath])
-    return y
-
-
 def make_generator_separated():
     x = Input((128, ))
     cls = Input((1, ), dtype='int32')
@@ -96,9 +61,9 @@ def make_generator_separated():
     y = Dense(128 * 4 * 4, kernel_initializer=glorot_init)(x)
     y = Reshape((4, 4, 128))(y)
 
-    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
-    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
-    y = condresblock(y, cls, (3, 3), 'UP', 128, BatchNormalization)
+    y = cond_resblock(y, cls, (3, 3), 'UP', 128, number_of_classes=10)
+    y = cond_resblock(y, cls, (3, 3), 'UP', 128, number_of_classes=10)
+    y = cond_resblock(y, cls, (3, 3), 'UP', 128, number_of_classes=10)
 
     y = BatchNormalization(axis=-1)(y)
     y = Activation('relu')(y)
@@ -125,6 +90,7 @@ def make_generator_ci():
                       padding='same', activation='tanh')(y)
     return Model(inputs=[x, cls], outputs=y)
 
+
 def make_discriminator():
     """Creates a discriminator model that takes an image as input and outputs a single value, representing whether
     the input is real or generated."""
@@ -142,6 +108,42 @@ def make_discriminator():
     y = Dense(1, use_bias=True, kernel_initializer=glorot_init)(y)
 
     return Model(inputs=x, outputs=[y, cls_out])
+
+
+def make_spectral_discriminator():
+    from spectral_normalized_layers import SNConv2D, SNDense
+    x = Input((32, 32, 3))
+
+    y = resblock(x, (3, 3), 'DOWN', 128, norm=None, is_first=True, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'DOWN', 128, norm=None, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, norm=None, conv_shortcut=False, conv_layer=SNConv2D)
+
+    y = Activation('relu')(y)
+
+    y = GlobalAveragePooling2D()(y)
+    cls_out = SNDense(units=10, use_bias=True, kernel_initializer=glorot_init)(y)
+    y = SNDense(units=1, use_bias=True, kernel_initializer=glorot_init)(y)
+
+    return Model(inputs=[x], outputs=[y, cls_out])
+
+
+def make_sep_spectral_discriminator():
+    from spectral_normalized_layers import SNConv2D, SNDense, SNConditionalConv11
+    x = Input((28, 28, 1))
+    cls = Input((1, ), dtype='int32')
+
+    y = cond_resblock(x, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, is_first=True, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'DOWN', 128, number_of_classes=10, norm=None, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+    y = cond_resblock(y, cls, (3, 3), 'SAME', 128, number_of_classes=10, norm=None, conv_shortcut=False, conv_layer=SNConv2D, cond_conv_layer=SNConditionalConv11)
+
+    y = Activation('relu')(y)
+
+    y = GlobalAveragePooling2D()(y)
+    y = SNDense(1, use_bias=True, kernel_initializer=glorot_init)(y)
+
+    return Model(inputs=[x, cls], outputs=[y])
 
 
 class CifarDataset(ArrayDataset):
@@ -187,9 +189,10 @@ class CifarDataset(ArrayDataset):
         return image
 
 
+
 def main():
-    generator = make_generator_separated()
-    discriminator = make_discriminator()
+    generator = make_generator_ci()
+    discriminator = make_spectral_discriminator()
 
     print (generator.summary())
     print (discriminator.summary())

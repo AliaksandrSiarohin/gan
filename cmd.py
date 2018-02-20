@@ -10,10 +10,10 @@ def parser_with_default_args():
     parser.add_argument("--training_ratio", default=5, type=int,
                         help="The training ratio is the number of discriminator updates per generator update." +
                         "The paper uses 5")
-    parser.add_argument("--gradient_penalty_weight", default=10, type=float, help='Weight of gradient penalty loss')
+    parser.add_argument("--gradient_penalty_weight", default=0, type=float, help='Weight of gradient penalty loss')
 
-    parser.add_argument("--generator_adversarial_objective", default='wgan', choices=['ns-gan', 'lsgan', 'wgan'])
-    parser.add_argument("--discriminator_adversarial_objective", default='wgan', choices=['ns-gan', 'lsgan', 'wgan'])
+    parser.add_argument("--generator_adversarial_objective", default='ns-gan', choices=['ns-gan', 'lsgan', 'wgan'])
+    parser.add_argument("--discriminator_adversarial_objective", default='ns-gan', choices=['ns-gan', 'lsgan', 'wgan'])
     parser.add_argument("--gradient_penalty_type", default='wgan-gp', choices=['wgan-gp', 'dragan'])
 
     parser.add_argument("--number_of_epochs", default=100, type=int, help="Number of training epochs")
