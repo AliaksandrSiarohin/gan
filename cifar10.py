@@ -1,6 +1,7 @@
 from keras.models import Input, Model
 from keras.layers import Dense, Reshape, Activation, Conv2D, GlobalAveragePooling2D
 from keras.layers.normalization import BatchNormalization
+from keras.optimizers import Adam
 
 from gan import GAN
 from dataset import ArrayDataset
@@ -19,6 +20,7 @@ from keras import backend as K
 import os
 from tqdm import tqdm
 
+from spectral_normalized_layers import SNConv2D, SNDense
 
 def load_data():
     """Loads CIFAR10 dataset.
@@ -74,13 +76,13 @@ def make_discriminator():
     the input is real or generated."""
     x = Input((32, 32, 3))
 
-    y = resblock(x, (3, 3), 'DOWN', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'DOWN', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization)
-    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization)
+    y = resblock(x, (3, 3), 'DOWN', 128, InstanceNormalization, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'DOWN', 128, InstanceNormalization, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization, conv_layer=SNConv2D)
+    y = resblock(y, (3, 3), 'SAME', 128, InstanceNormalization, conv_layer=SNConv2D)
 
     y = GlobalAveragePooling2D()(y)
-    y = Dense(1, use_bias=False)(y)
+    y = SNDense(units=1, use_bias=False)(y)
 
     return Model(inputs=x, outputs=y)
 
@@ -94,7 +96,7 @@ class CifarDataset(ArrayDataset):
         super(CifarDataset, self).__init__(X, batch_size, noise_size)
 
     def display(self, output_batch, input_batch=None):
-        batch = output_batch
+        batch = output_batch[0]
         image = super(CifarDataset, self).display(batch)
         image = (image * 127.5) + 127.5
         image = np.squeeze(np.round(image).astype(np.uint8))
@@ -104,25 +106,42 @@ class CifarDataset(ArrayDataset):
 def main():
     generator = make_generator()
     discriminator = make_discriminator()
+
+    print (generator.summary())
+    print (discriminator.summary())
+
     parser = parser_with_default_args()
     parser.add_argument("--phase", choices=['train', 'test'], default='train')
+    parser.add_argument("--generator_batch_multiple", default=2, type=int,
+                        help="Size of the generator batch, multiple of batch_size.")
+    parser.add_argument("--lr", default=2e-4, type=float, help="Learning rate")
     args = parser.parse_args()
-    if args.phase == 'train':
-        dataset = CifarDataset(args.batch_size)
-        gan = GAN(generator if args.generator_checkpoint is None else args.generator_checkpoint,
-                      discriminator if args.discriminator_checkpoint is None else args.discriminator_checkpoint, **vars(args))
-        trainer = Trainer(dataset, gan, **vars(args))
 
-        trainer.train()
-    else:
-        generator.load_weights(filepath=args.generator_checkpoint)
-        dataset = CifarDataset(100)
+    if args.generator_checkpoint is not None:
+        generator.load_weights(args.generator_checkpoint)
+    if args.discriminator_checkpoint is not None:
+        discriminator.load_weights(args.discriminator_checkpoint)
+
+    args.generator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
+    args.discriminator_optimizer = Adam(args.lr, beta_1=0, beta_2=0.9)
+
+    def compute_inception_score():
         images = np.empty((50000, 32, 32, 3))
+        dataset._batch_size = 100
         for i in tqdm(range(0, 50000, 100)):
-            g_s = dataset.next_generator_sample()
+            g_s = dataset.next_generator_sample_test()
             images[i:(i+100)] = generator.predict(g_s)
         images *= 127.5
         images += 127.5
         print(get_inception_score(images))
+        dataset._batch_size = args.batch_size
+
+    if args.phase == 'train':
+        dataset = CifarDataset(args.batch_size)
+        gan = GAN(generator=generator, discriminator=discriminator, **vars(args))
+        trainer = Trainer(dataset, gan, at_store_checkpoint_hook = compute_inception_score,  lr_decay_shedule='linear', **vars(args))
+        trainer.train()
+
+
 if __name__ == "__main__":
     main()
