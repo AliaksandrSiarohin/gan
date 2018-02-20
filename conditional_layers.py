@@ -1,8 +1,12 @@
 from keras.engine import Layer, InputSpec
 from keras import initializers, regularizers, constraints
 from keras import backend as K
+from keras.backend import tf as ktf
 from keras.utils import conv_utils
 from keras import activations
+from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, Add, AveragePooling2D, Reshape
+
+from layer_utils import he_init, glorot_init
 
 class ConditionalInstanceNormalization(Layer):
     """Conditional Instance normalization layer.
@@ -139,6 +143,7 @@ class ConditionalInstanceNormalization(Layer):
 
     def get_config(self):
         config = {
+            'number_of_classes': self.number_of_classes,
             'axis': self.axis,
             'epsilon': self.epsilon,
             'center': self.center,
@@ -151,6 +156,176 @@ class ConditionalInstanceNormalization(Layer):
             'gamma_constraint': constraints.serialize(self.gamma_constraint)
         }
         base_config = super(ConditionalInstanceNormalization, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class ConditionalConv11(Layer):
+    def __init__(self, filters,
+             number_of_classes,
+             strides=1,
+             data_format=None,
+             activation=None,
+             use_bias=True,
+             kernel_initializer='glorot_uniform',
+             bias_initializer='zeros',
+             kernel_regularizer=None,
+             bias_regularizer=None,
+             activity_regularizer=None,
+             kernel_constraint=None,
+             bias_constraint=None,
+             **kwargs):
+        super(ConditionalConv11, self).__init__(**kwargs)
+        self.filters = filters
+        self.kernel_size = conv_utils.normalize_tuple((1, 1), 2, 'kernel_size')
+        self.number_of_classes = number_of_classes
+        self.strides = conv_utils.normalize_tuple(strides, 2, 'strides')
+        self.padding = conv_utils.normalize_padding('same')
+        self.data_format = conv_utils.normalize_data_format(data_format)
+        self.dilation_rate = conv_utils.normalize_tuple(1, 2, 'dilation_rate')
+        self.activation = activations.get(activation)
+        self.use_bias = use_bias
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.kernel_constraint = constraints.get(kernel_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
+
+
+    def build(self, input_shape):
+        if self.data_format == 'channels_first':
+            channel_axis = 1
+        else:
+            channel_axis = -1
+        if input_shape[channel_axis] is None:
+            raise ValueError('The channel dimension of the inputs '
+                             'should be defined. Found `None`.')
+        input_dim = input_shape[0][channel_axis]
+        self.input_dim = input_dim
+        kernel_shape = (self.number_of_classes, ) + self.kernel_size + (input_dim, self.filters)
+
+        self.kernel = self.add_weight(shape=kernel_shape,
+                                      initializer=self.kernel_initializer,
+                                      name='kernel',
+                                      regularizer=self.kernel_regularizer,
+                                      constraint=self.kernel_constraint)
+        if self.use_bias:
+            self.bias = self.add_weight(shape=(self.number_of_classes, self.filters),
+                                        initializer=self.bias_initializer,
+                                        name='bias',
+                                        regularizer=self.bias_regularizer,
+                                        constraint=self.bias_constraint)
+        else:
+            self.bias = None
+        super(ConditionalConv11, self).build(input_shape)
+
+    def call(self, inputs):
+        cls = inputs[1]
+        x = inputs[0]
+
+        _, w, h, in_c = K.int_shape(x)
+        ### Preprocess input
+        #(bs, w, h, c)
+        if self.data_format != 'channels_first':
+            x = ktf.transpose(x,  [0, 3, 1, 2])
+        #(bs, c, w, h)
+        x = ktf.reshape(x, (-1, in_c, w * h))
+        #(bs, c, w*h)
+        x = ktf.expand_dims(x, axis=0)
+        #(1, bs, c, w*h)
+
+        ### Preprocess filter
+        cls = ktf.squeeze(cls, axis=1)
+        #(num_cls, 1, 1, in, out)
+        kernel = ktf.gather(self.kernel, cls)
+        #print (K.int_shape(kernel))
+        #(bs, 1, 1, in, out)
+        kernel = ktf.transpose(kernel, [3, 1, 2, 0, 4])
+        #print (K.int_shape(kernel))
+        #(in, 1, 1, bs, out)
+        kernel = ktf.squeeze(kernel, axis=1)
+        #print (K.int_shape(kernel))
+        #(in, 1, bs, out)
+        #print (K.int_shape(kernel))
+
+
+        output = ktf.nn.depthwise_conv2d(input=x, filter=kernel, padding='VALID', strides=[1, 1, 1, 1],
+                                         data_format='NCHW')
+        ### Deprocess output
+        # (1, bs * out, 1, w * h)
+        output = ktf.squeeze(output, axis=2)
+        output = ktf.squeeze(output, axis=0)
+
+        # (bs * out, w * h)
+        output = ktf.reshape(output, (-1, self.filters, w, h))
+
+        if self.bias is not None:
+            #(num_cls, out)
+            bias = ktf.gather(self.bias, cls)
+            #(bs, bias)
+            bias = ktf.expand_dims(bias, axis=-1)
+            bias = ktf.expand_dims(bias, axis=-1)
+            #(bs, bias, 1, 1)
+            output += bias
+
+        if self.data_format != 'channels_first':
+            #(bs, out, w, h)
+            output = ktf.transpose(output, [0, 2, 3, 1])
+
+        if self.activation is not None:
+            return self.activation(output)
+
+        return output
+
+    def compute_output_shape(self, input_shape):
+        input_shape = input_shape[0]
+        if self.data_format == 'channels_last':
+            space = input_shape[1:-1]
+            new_space = []
+            for i in range(len(space)):
+                new_dim = conv_utils.conv_output_length(
+                    space[i],
+                    self.kernel_size[i],
+                    padding=self.padding,
+                    stride=self.strides[i],
+                    dilation=self.dilation_rate[i])
+                new_space.append(new_dim)
+            return (input_shape[0],) + tuple(new_space) + (self.filters,)
+        if self.data_format == 'channels_first':
+            space = input_shape[2:]
+            new_space = []
+            for i in range(len(space)):
+                new_dim = conv_utils.conv_output_length(
+                    space[i],
+                    self.kernel_size[i],
+                    padding=self.padding,
+                    stride=self.strides[i],
+                    dilation=self.dilation_rate[i])
+                new_space.append(new_dim)
+            return (input_shape[0], self.filters) + tuple(new_space)
+
+    def get_config(self):
+        config = {
+            'number_of_classes': self.number_of_classes,
+            'rank': 2,
+            'filters': self.filters,
+            'kernel_size': self.kernel_size,
+            'strides': self.strides,
+            'padding': self.padding,
+            'data_format': self.data_format,
+            'dilation_rate': self.dilation_rate,
+            'activation': activations.serialize(self.activation),
+            'use_bias': self.use_bias,
+            'kernel_initializer': initializers.serialize(self.kernel_initializer),
+            'bias_initializer': initializers.serialize(self.bias_initializer),
+            'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
+            'bias_regularizer': regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer': regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint': constraints.serialize(self.kernel_constraint),
+            'bias_constraint': constraints.serialize(self.bias_constraint)
+        }
+        base_config = super(ConditionalConv11, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
@@ -275,6 +450,7 @@ class ConditionalConv2D(Layer):
 
     def get_config(self):
         config = {
+            'number_of_classes': self.number_of_classes,
             'rank': 2,
             'filters': self.filters,
             'kernel_size': self.kernel_size,
@@ -294,6 +470,240 @@ class ConditionalConv2D(Layer):
         }
         base_config = super(ConditionalConv2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class ConditionalDense(Layer):
+    def __init__(self, units,
+                 number_of_classes,
+                 activation=None,
+                 use_bias=True,
+                 kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros',
+                 kernel_regularizer=None,
+                 bias_regularizer=None,
+                 activity_regularizer=None,
+                 kernel_constraint=None,
+                 bias_constraint=None,
+                 **kwargs):
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+        super(ConditionalDense, self).__init__(**kwargs)
+        self.units = units
+        self.number_of_classes = number_of_classes
+        self.activation = activations.get(activation)
+        self.use_bias = use_bias
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.kernel_constraint = constraints.get(kernel_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        input_shape = input_shape[0]
+        assert len(input_shape) >= 2
+        input_dim = input_shape[-1]
+
+        self.kernel = self.add_weight(shape=(self.number_of_classes, input_dim, self.units),
+                                      initializer=self.kernel_initializer,
+                                      name='kernel',
+                                      regularizer=self.kernel_regularizer,
+                                      constraint=self.kernel_constraint)
+        if self.use_bias:
+            self.bias = self.add_weight(shape=(self.number_of_classes, self.units),
+                                        initializer=self.bias_initializer,
+                                        name='bias',
+                                        regularizer=self.bias_regularizer,
+                                        constraint=self.bias_constraint)
+        else:
+            self.bias = None
+        self.built = True
+
+    def call(self, inputs):
+        def separate_dot_for_each_batch(inputs):
+            kernel = inputs[1]
+            x = K.expand_dims(inputs[0], axis=0)
+            outputs = K.dot(x, kernel)
+            if self.bias is not None:
+                bias = inputs[2]
+                outputs = K.bias_add(outputs, bias)
+            return K.squeeze(outputs, axis=0)
+
+        x = inputs[0]
+        classes = K.squeeze(inputs[1], axis=1)
+
+        if self.bias is not None:
+            outputs = K.map_fn(separate_dot_for_each_batch,
+                          [x, K.gather(self.kernel, classes), K.gather(self.bias, classes)], dtype='float32')
+        else:
+            outputs = K.map_fn(separate_dot_for_each_batch,
+                          [x, K.gather(self.kernel, classes)], dtype='float32')
+
+        if self.activation is not None:
+            return self.activation(outputs)
+        return outputs
+
+
+    def compute_output_shape(self, input_shape):
+        input_shape = input_shape[0]
+        assert input_shape and len(input_shape) >= 2
+        assert input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] = self.units
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {
+            'number_of_classes': self.number_of_classes,
+            'units': self.units,
+            'activation': activations.serialize(self.activation),
+            'use_bias': self.use_bias,
+            'kernel_initializer': initializers.serialize(self.kernel_initializer),
+            'bias_initializer': initializers.serialize(self.bias_initializer),
+            'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
+            'bias_regularizer': regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer': regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint': constraints.serialize(self.kernel_constraint),
+            'bias_constraint': constraints.serialize(self.bias_constraint)
+        }
+        base_config = super(ConditionalDense, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
+                  norm=BatchNormalization, is_first=False, conv_shortcut=True):
+    assert resample in ["UP", "SAME", "DOWN"]
+
+    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
+    if norm is None:
+        norm = lambda axis: lambda x: x ##Identity, no normalization
+
+
+
+    if resample == "UP":
+        shortcut = UpSampling2D(size=(2, 2)) (x)
+        shortcut = Conv2D(nfilters, (1, 1), padding = 'same',
+                          kernel_initializer=glorot_init, use_bias = True) (shortcut)
+
+        convpath = x
+        if not is_first:
+            convpath = norm(axis=feature_axis)(convpath)
+            convpath = Activation('relu') (convpath)
+        convpath = UpSampling2D(size=(2, 2))(convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                      use_bias=True, padding='same')(convpath)
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu')(convpath)
+        convpath = ConditionalConv2D(number_of_classes=number_of_classes, filters=nfilters,
+                                     kernel_initializer=he_init)([convpath, cls])
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu')(convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                     use_bias=True, padding='same') (convpath)
+
+        y = Add() ([shortcut, convpath])
+    elif resample == "SAME":
+        if conv_shortcut:
+            shortcut = Conv2D(nfilters, (1, 1), padding = 'same',
+                              kernel_initializer=glorot_init, use_bias = True) (x)
+        else:
+            shortcut = x
+
+        convpath = x
+        if not is_first:
+            convpath = norm(axis=feature_axis)(convpath)
+            convpath = Activation('relu') (convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                 use_bias=True, padding='same')(convpath)
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu')(convpath)
+        convpath = ConditionalConv2D(number_of_classes=number_of_classes, filters=nfilters,
+                                     kernel_initializer=he_init)([convpath, cls])
+
+        convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu') (convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                 use_bias=True, padding='same') (convpath)
+
+        y = Add() ([shortcut, convpath])
+
+    else:
+        if not is_first:
+            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer=glorot_init,
+                              padding = 'same', use_bias=True) (x)
+            shortcut = AveragePooling2D(pool_size=(2, 2))(shortcut)
+        else:
+            shortcut = AveragePooling2D(pool_size=(2, 2))(x)
+            shortcut = Conv2D(nfilters, (1, 1), kernel_initializer=he_init,
+                              padding = 'same', use_bias=True) (shortcut)
+
+
+        convpath = x
+        if not is_first:
+            convpath = norm(axis=feature_axis)(convpath)
+            convpath = Activation('relu') (convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                 use_bias=True, padding='same')(convpath)
+        if not is_first:
+            convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu')(convpath)
+        convpath = ConditionalConv2D(number_of_classes=number_of_classes, filters=nfilters,
+                                     kernel_initializer=he_init)([convpath, cls])
+        if not is_first:
+            convpath = norm(axis=feature_axis)(convpath)
+        convpath = Activation('relu') (convpath)
+        convpath = Conv2D(nfilters, kernel_size, kernel_initializer=he_init,
+                                 use_bias=True, padding='same') (convpath)
+        convpath = AveragePooling2D(pool_size = (2, 2))(convpath)
+        y = Add() ([shortcut, convpath])
+
+    return y
+
+
+def test_conditional_dense():
+    from keras.models import Model, Input
+    import numpy as np
+    def kernel_init(shape):
+        np.random.seed(0)
+        return np.random.normal(size=shape)
+
+    inp = Input((2,))
+    cls = Input((1, ), dtype='int32')
+    dence = ConditionalDense(number_of_classes=3, units=2, use_bias=True,
+                            kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
+    rs_inp = Reshape((1, 1, 2))([inp])
+    cv_sep = ConditionalConv2D(number_of_classes=3, kernel_size=(1, 1), filters=2, padding='valid', use_bias=True,
+                               kernel_initializer=kernel_init, bias_initializer=kernel_init)([rs_inp, cls])
+    m = Model([inp, cls], [dence, cv_sep])
+    x = np.arange(2 * 2).reshape((2, 2))
+    cls = np.expand_dims(np.arange(2) % 3, axis=-1)
+    out1, out2 = m.predict([x, cls])
+    out2 = np.squeeze(out2, axis=(1, 2))
+
+    assert np.sum(np.abs(out1 - out2)) < 1e-5
+
+
+def test_conditional_conv11():
+    from keras.models import Model, Input
+    import numpy as np
+    def kernel_init(shape):
+        np.random.seed(0)
+        return np.random.normal(size=shape)
+
+    inp = Input((10, 10, 10))
+    cls = Input((1, ), dtype='int32')
+    cv11 = ConditionalConv11(number_of_classes=3, filters=20,
+                                            kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
+    cv_sep = ConditionalConv2D(number_of_classes=3, kernel_size=(1, 1), filters=20, padding='valid', use_bias=True,
+                               kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
+    m = Model([inp, cls], [cv11, cv_sep])
+    x = np.arange(10 * 1000).reshape((10, 10, 10, 10))
+    cls = np.expand_dims(np.arange(10) % 3, axis=-1)
+    out1, out2 = m.predict([x, cls])
+
+    assert np.sum(np.abs(out1 - out2)) < 1e-5
 
 
 def test_conditional_instance():
@@ -342,5 +752,7 @@ def test_conditional_conv():
     assert np.all(out[2] == 5)
 
 if __name__ == "__main__":
-    test_conditional_conv()
-    test_conditional_instance()
+    #test_conditional_conv()
+    #test_conditional_instance()
+    #test_conditional_conv11()
+    test_conditional_dense()
