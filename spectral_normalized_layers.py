@@ -1,22 +1,26 @@
 from keras.layers import Conv2D, Dense
 import keras.initializers
 from keras import backend as K
+from keras.backend import tf as ktf
 from conditional_layers import ConditionalConv11, ConditionalDense
 import numpy as np
 
 
-def max_singular_val(w, u):
-    u = K.expand_dims(u, axis=1)
-    v_bar = K.dot(K.transpose(w), u)
-    v_bar = K.l2_normalize(v_bar)
+def max_singular_val(w, u, transpose=lambda x: K.transpose(x)):
+    u = K.expand_dims(u, axis=-1)
+    v_bar = ktf.matmul(transpose(w), u)
+    v_bar = K.l2_normalize(v_bar, axis=(-1, -2))
 
-    u_bar_raw = K.dot(w, v_bar)
-    u_bar = K.l2_normalize(u_bar_raw)
+    u_bar_raw = ktf.matmul(w, v_bar)
+    u_bar = K.l2_normalize(u_bar_raw, axis=(-1, -2))
+    sigma = ktf.matmul(transpose(u_bar), u_bar_raw)
 
-    sigma = K.sum(u_bar * u_bar_raw)
-    sigma = K.stop_gradient(sigma)
+    sigma = K.squeeze(sigma, axis=-1)
+    sigma = K.squeeze(sigma, axis=-1)
 
-    u_bar = K.squeeze(u_bar, axis=1)
+    #sigma = K.stop_gradient(sigma)
+
+    u_bar = K.squeeze(u_bar, axis=-1)
     return sigma, u_bar
 
 
@@ -101,16 +105,9 @@ class SNConditionalConv11(ConditionalConv11):
 
 
     def call(self, inputs):
-        sigmas, u_bars = [], []
         kernel_shape = K.int_shape(self.kernel)
         w = K.reshape(self.kernel, (kernel_shape[0], kernel_shape[1] * kernel_shape[2] * kernel_shape[3], kernel_shape[-1]))
-        for i in range(self.number_of_classes):
-            sigma, u_bar = max_singular_val(w[i], self.u[i])
-            u_bar = K.reshape(u_bar, (1, -1))
-            sigmas.append(sigma)
-            u_bars.append(u_bar)
-        sigma = K.stack(sigmas, axis=0)
-        u_bar = K.concatenate(u_bars, axis=0)
+        sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]))
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
         self.updates.append(K.update(self.u, u_bar))
 
@@ -137,15 +134,8 @@ class SNCondtionalDense(ConditionalDense):
 
 
     def call(self, inputs):
-        sigmas, u_bars = [], []
         w = self.kernel
-        for i in range(self.number_of_classes):
-            sigma, u_bar = max_singular_val(w[i], self.u[i])
-            u_bar = K.reshape(u_bar, (1, -1))
-            sigmas.append(sigma)
-            u_bars.append(u_bar)
-        sigma = K.stack(sigmas, axis=0)
-        u_bar = K.concatenate(u_bars, axis=0)
+        sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]))
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
         self.updates.append(K.update(self.u, u_bar))
 
@@ -155,7 +145,6 @@ class SNCondtionalDense(ConditionalDense):
         self.kernel = kernel
 
         return outputs
-
 
 
 def test_dense():
@@ -279,6 +268,5 @@ def test_conditional_dense():
         assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
 
 
-
 if __name__ == "__main__":
-    test_conditional_dense()
+    test_conditional_conv()

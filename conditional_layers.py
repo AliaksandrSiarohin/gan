@@ -517,28 +517,24 @@ class ConditionalDense(Layer):
         self.built = True
 
     def call(self, inputs):
-        def separate_dot_for_each_batch(inputs):
-            kernel = inputs[1]
-            x = K.expand_dims(inputs[0], axis=0)
-            outputs = K.dot(x, kernel)
-            if self.bias is not None:
-                bias = inputs[2]
-                outputs = K.bias_add(outputs, bias)
-            return K.squeeze(outputs, axis=0)
-
-        x = inputs[0]
         classes = K.squeeze(inputs[1], axis=1)
+        kernel = K.gather(self.kernel, classes)
+        #(bs, in, out)
+
+        x = K.expand_dims(inputs[0], axis=1)
+        #(bs, 1, in)
+        output = ktf.matmul(x, kernel)
+        #(bs, 1, out)
+        output = K.squeeze(output, axis=1)
+        #(bs, out)
 
         if self.bias is not None:
-            outputs = K.map_fn(separate_dot_for_each_batch,
-                          [x, K.gather(self.kernel, classes), K.gather(self.bias, classes)], dtype='float32')
-        else:
-            outputs = K.map_fn(separate_dot_for_each_batch,
-                          [x, K.gather(self.kernel, classes)], dtype='float32')
+            b = K.gather(self.bias, classes)
+            output += b
 
         if self.activation is not None:
-            return self.activation(outputs)
-        return outputs
+            return self.activation(output)
+        return output
 
 
     def compute_output_shape(self, input_shape):
@@ -732,5 +728,5 @@ def test_conditional_conv():
 if __name__ == "__main__":
     #test_conditional_conv()
     #test_conditional_instance()
-    test_conditional_conv11()
-    #test_conditional_dense()
+    #test_conditional_conv11()
+    test_conditional_dense()
