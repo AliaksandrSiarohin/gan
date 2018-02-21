@@ -5,7 +5,7 @@ matplotlib.use('Agg')
 import pylab as plt
 from skimage.transform import resize
 from skimage import img_as_ubyte
-
+from sklearn.utils import shuffle
 
 class UGANDataset(object):
     def __init__(self, batch_size, noise_size):
@@ -65,7 +65,8 @@ class ArrayDataset(UGANDataset):
     
     def _shuffle_data(self):
         np.random.shuffle(self._X)
-    
+
+
 class FolderDataset(UGANDataset):
     def __init__(self, input_dir, batch_size, noise_size, image_size):
         super(FolderDataset, self).__init__(batch_size, noise_size)        
@@ -90,6 +91,58 @@ class FolderDataset(UGANDataset):
     def display(self, output_batch, input_batch = None):
         image = super(FolderDataset, self).display(output_batch)
         return self._deprocess_image(image)
+
+
+class LabeledArrayDataset(ArrayDataset):
+    def __init__(self, X, batch_size, y=None, noise_size=(128, )):
+        X = (X.astype(np.float32) - 127.5) / 127.5
+        #dequantize
+        X += np.random.uniform(0, 1/128.0, size=X.shape)
+        super(LabeledArrayDataset, self).__init__(X, batch_size, noise_size)
+
+        self._Y = y
+        if y is not None:
+            if len(y.shape) == 1:
+                self._Y = np.expand_dims(y, axis=1)
+            self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
+
+    def number_of_batches_per_epoch(self):
+        return 1000
+
+    def number_of_batches_per_validation(self):
+        return 0
+
+    def next_generator_sample(self):
+        labels = [] if self._Y is None else self.current_discriminator_labels
+        return [np.random.normal(size=(self._batch_size,) + self._noise_size)] + labels
+
+    def next_generator_sample_test(self):
+        labels = [] if self._Y is None else [(np.arange(self._batch_size) % 10).reshape((self._batch_size,1))]
+        return [np.random.normal(size=(self._batch_size,) + self._noise_size)] + labels
+
+    def _load_discriminator_data(self, index):
+        if self._Y is not None:
+            self.current_discriminator_labels = [self._Y[index]]
+        else:
+            self.current_discriminator_labels = []
+        return [self._X[index]] + self.current_discriminator_labels
+
+    def _shuffle_data(self):
+        x_shape = self._X.shape
+        self._X = self._X.reshape((x_shape[0], -1))
+        if self._Y is None:
+            self._X = shuffle(self._X)
+        else:
+            self._X, self._Y = shuffle(self._X, self._Y)
+        self._X = self._X.reshape(x_shape)
+
+    def display(self, output_batch, input_batch=None):
+        batch = output_batch[0]
+        image = super(LabeledArrayDataset, self).display(batch)
+        image = (image * 127.5) + 127.5
+        image = np.squeeze(np.round(image).astype(np.uint8))
+        return image
+
     
     
 

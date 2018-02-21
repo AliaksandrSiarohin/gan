@@ -74,7 +74,7 @@ class Trainer(object):
         g_title = "epoch_{}_generator.h5".format(str(self.current_epoch).zfill(3))
         d_title = "epoch_{}_discriminator.h5".format(str(self.current_epoch).zfill(3))
         if self.at_store_checkpoint_hook is not None:
-            self.at_store_checkpoint_hook()
+            self.at_store_checkpoint_hook(self.current_epoch)
         if not os.path.exists(self.checkpoints_dir):
             os.makedirs(self.checkpoints_dir)
         if self.save_weights_only:

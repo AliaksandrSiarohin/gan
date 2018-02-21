@@ -146,7 +146,7 @@ class SNCondtionalDense(ConditionalDense):
             u_bars.append(u_bar)
         sigma = K.stack(sigmas, axis=0)
         u_bar = K.concatenate(u_bars, axis=0)
-        sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
+        sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
         self.updates.append(K.update(self.u, u_bar))
 
         kernel = self.kernel
