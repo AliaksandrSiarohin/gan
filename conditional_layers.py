@@ -232,34 +232,29 @@ class ConditionalConv11(Layer):
         #(bs, c, w, h)
         x = ktf.reshape(x, (-1, in_c, w * h))
         #(bs, c, w*h)
-        x = ktf.expand_dims(x, axis=0)
-        #(1, bs, c, w*h)
+        x = ktf.transpose(x, [0, 2, 1])
+        #(bs, w*h, c)
 
         ### Preprocess filter
         cls = ktf.squeeze(cls, axis=1)
         #(num_cls, 1, 1, in, out)
         kernel = ktf.gather(self.kernel, cls)
-        #print (K.int_shape(kernel))
         #(bs, 1, 1, in, out)
-        kernel = ktf.transpose(kernel, [3, 1, 2, 0, 4])
-        #print (K.int_shape(kernel))
-        #(in, 1, 1, bs, out)
+
+        kernel = ktf.squeeze(kernel, axis=1)
         kernel = ktf.squeeze(kernel, axis=1)
         #print (K.int_shape(kernel))
         #(in, 1, bs, out)
         #print (K.int_shape(kernel))
 
+        output = ktf.matmul(x, kernel)
+        #(bs, w*h, out)
 
-        output = ktf.nn.depthwise_conv2d(input=x, filter=kernel, padding='VALID', strides=[1, 1, 1, 1],
-                                         data_format='NCHW')
         ### Deprocess output
-        # (1, bs * out, 1, w * h)
-        output = ktf.squeeze(output, axis=2)
-        output = ktf.squeeze(output, axis=0)
-
-        # (bs * out, w * h)
+        output = ktf.transpose(output, [0, 2, 1])
+        # (bs, out, w * h)
         output = ktf.reshape(output, (-1, self.filters, w, h))
-
+        # (bs, out, w, h)
         if self.bias is not None:
             #(num_cls, out)
             bias = ktf.gather(self.bias, cls)
@@ -675,8 +670,8 @@ def test_conditional_conv11():
         np.random.seed(0)
         return np.random.normal(size=shape)
 
-    inp = Input((10, 10, 10))
-    cls = Input((1, ), dtype='int32')
+    inp = Input(batch_shape = (10, 10, 10, 10))
+    cls = Input(batch_shape = (10, 1), dtype='int32')
     cv11 = ConditionalConv11(number_of_classes=3, filters=20,
                                             kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
     cv_sep = ConditionalConv2D(number_of_classes=3, kernel_size=(1, 1), filters=20, padding='valid', use_bias=True,
@@ -737,5 +732,5 @@ def test_conditional_conv():
 if __name__ == "__main__":
     #test_conditional_conv()
     #test_conditional_instance()
-    #test_conditional_conv11()
-    test_conditional_dense()
+    test_conditional_conv11()
+    #test_conditional_dense()
