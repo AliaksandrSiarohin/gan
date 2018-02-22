@@ -17,8 +17,8 @@ class GAN(object):
                  additional_inputs_for_discriminator_train=[],
                  custom_objects={},**kwargs):
 
-        assert generator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan']
-        assert discriminator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan']
+        assert generator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan', 'hinge']
+        assert discriminator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan', 'hinge']
         assert gradient_penalty_type in ['dragan', 'wgan-gp']
 
         if type(generator) == str:
@@ -71,9 +71,13 @@ class GAN(object):
         def wgan(logits):
             return -ktf.reduce_mean(logits)
 
+        def hinge(logits):
+            return -ktf.reduce_mean(logits)
+
         losses = {'ns-gan': ns_loss(self.discriminator_fake_output[0]),
                   'lsgan': ls_loss(self.discriminator_fake_output[0]),
-                  'wgan': wgan(self.discriminator_fake_output[0])}
+                  'wgan': wgan(self.discriminator_fake_output[0]),
+                  'hinge': hinge(self.discriminator_fake_output[0])}
         self.generator_metric_names.append('fake')
         return losses[loss_type]
 
@@ -98,12 +102,20 @@ class GAN(object):
         def wgan_loss_fake(logits):
             return ktf.reduce_mean(logits)
 
+        def hinge_loss_true(logits):
+            return ktf.reduce_mean(ktf.maximum(0.0, 1.0 - logits))
+
+        def hinge_loss_fake(logits):
+            return ktf.reduce_mean(ktf.maximum(0.0, 1.0 + logits))
+
         losses = {'ns-gan': [ns_loss_true(self.discriminator_real_output[0]),
                              ns_loss_fake(self.discriminator_fake_output[0])],
                   'lsgan': [ls_loss_true(self.discriminator_real_output[0]),
                              ls_loss_fake(self.discriminator_fake_output[0])],
                   'wgan': [wgan_loss_true(self.discriminator_real_output[0]),
-                             wgan_loss_fake(self.discriminator_fake_output[0])]}
+                             wgan_loss_fake(self.discriminator_fake_output[0])],
+                  'hinge': [hinge_loss_true(self.discriminator_real_output[0]),
+                             hinge_loss_fake(self.discriminator_fake_output[0])]}
 
         self.discriminator_metric_names.append('true')
         self.discriminator_metric_names.append('fake')

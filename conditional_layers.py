@@ -601,30 +601,30 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
                                       use_bias=True, padding='same')(convpath)
 
-    convpath = norm(axis=feature_axis)(convpath)
-    convpath = Activation('relu')(convpath)
-
     merge_layers = []
 
     if cond_bottleneck_layer is not None:
         cond_bottleneck_path = cond_bottleneck_layer(number_of_classes=number_of_classes, filters=nfilters,
                                      kernel_initializer=he_init)([convpath, cls])
-        cond_bottleneck_path = norm(axis=feature_axis)(cond_bottleneck_path)
-        cond_bottleneck_path = Activation('relu')(cond_bottleneck_path)
+#        cond_bottleneck_path = norm(axis=feature_axis)(cond_bottleneck_path)
+#        cond_bottleneck_path = Activation('relu')(cond_bottleneck_path)
         merge_layers.append(cond_bottleneck_path)
 
     if uncond_bottleneck_layer is not None:
-        uncond_bottleneck_path = cond_bottleneck_layer(kernel_size=(1, 1), filters=nfilters,
-                                                        kernel_initializer=he_init)([convpath, cls])
-        uncond_bottleneck_path = norm(axis=feature_axis)(uncond_bottleneck_path)
-        uncond_bottleneck_path = Activation('relu')(uncond_bottleneck_path)
+        uncond_bottleneck_path = uncond_bottleneck_layer(kernel_size=(1, 1), filters=nfilters,
+                                                        kernel_initializer=he_init)(convpath)
+#        uncond_bottleneck_path = norm(axis=feature_axis)(uncond_bottleneck_path)
+#        uncond_bottleneck_path = Activation('relu')(uncond_bottleneck_path)
         merge_layers.append(uncond_bottleneck_path)
+
 
     if len(merge_layers) == 2:
         convpath = Add()(merge_layers)
     elif len(merge_layers) == 1:
         convpath = merge_layers[0]
 
+    convpath = norm(axis=feature_axis)(convpath)
+    convpath = Activation('relu')(convpath)
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
                           use_bias=True, padding='same')(convpath)
 
