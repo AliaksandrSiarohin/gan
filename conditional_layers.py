@@ -563,7 +563,7 @@ class ConditionalDense(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
+def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, name,
                   norm=BatchNormalization, is_first=False, conv_shortcut=True, conv_layer=Conv2D,
                   cond_bottleneck_layer=ConditionalConv11, uncond_bottleneck_layer=Conv2D):
     assert resample in ["UP", "SAME", "DOWN"]
@@ -573,12 +573,12 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
     identity = lambda x: x
 
     if norm is None:
-        norm = lambda axis: identity
+        norm = lambda axis, name: identity
 
     if resample == "UP":
-        resample_op = UpSampling2D(size=(2, 2))
+        resample_op = UpSampling2D(size=(2, 2), name=name + '_up')
     elif resample == "DOWN":
-        resample_op = AveragePooling2D(pool_size=(2, 2))
+        resample_op = AveragePooling2D(pool_size=(2, 2), name=name + '_pool')
     else:
         resample_op = identity
 
@@ -587,34 +587,30 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
     shortcut = x
     if conv_shortcut:
         shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), padding='same',
-                          kernel_initializer=glorot_init, use_bias=True)(shortcut)
+                          kernel_initializer=glorot_init, use_bias=True, name=name + '_shortcut')(shortcut)
         shortcut = resample_op(shortcut)
 
     ### CONV PATH
     convpath = x
     if not is_first:
-        convpath = norm(axis=feature_axis)(convpath)
+        convpath = norm(axis=feature_axis, name=name + '_bn1')(convpath)
         convpath = Activation('relu')(convpath)
     if resample == "UP":
         convpath = resample_op(convpath)
 
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                      use_bias=True, padding='same')(convpath)
+                                      use_bias=True, padding='same', name=name + '_conv1')(convpath)
 
     merge_layers = []
 
     if cond_bottleneck_layer is not None:
         cond_bottleneck_path = cond_bottleneck_layer(number_of_classes=number_of_classes, filters=nfilters,
-                                     kernel_initializer=he_init)([convpath, cls])
-#        cond_bottleneck_path = norm(axis=feature_axis)(cond_bottleneck_path)
-#        cond_bottleneck_path = Activation('relu')(cond_bottleneck_path)
+                                     kernel_initializer=he_init, name=name + '_cond_bottle')([convpath, cls])
         merge_layers.append(cond_bottleneck_path)
 
     if uncond_bottleneck_layer is not None:
         uncond_bottleneck_path = uncond_bottleneck_layer(kernel_size=(1, 1), filters=nfilters,
-                                                        kernel_initializer=he_init)(convpath)
-#        uncond_bottleneck_path = norm(axis=feature_axis)(uncond_bottleneck_path)
-#        uncond_bottleneck_path = Activation('relu')(uncond_bottleneck_path)
+                                 kernel_initializer=he_init, name=name + '_uncond_bottle')(convpath)
         merge_layers.append(uncond_bottleneck_path)
 
 
@@ -623,10 +619,10 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes,
     elif len(merge_layers) == 1:
         convpath = merge_layers[0]
 
-    convpath = norm(axis=feature_axis)(convpath)
+    convpath = norm(axis=feature_axis, name=name + '_bn2')(convpath)
     convpath = Activation('relu')(convpath)
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                          use_bias=True, padding='same')(convpath)
+                          use_bias=True, padding='same', name=name + '_conv2')(convpath)
 
     if resample == "DOWN":
         convpath = resample_op(convpath)
