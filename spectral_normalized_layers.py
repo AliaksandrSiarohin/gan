@@ -6,19 +6,23 @@ from conditional_layers import ConditionalConv11, ConditionalDense
 import numpy as np
 
 
-def max_singular_val(w, u, transpose=lambda x: K.transpose(x)):
+def max_singular_val(w, u, fully_differentiable=False, ip=1, transpose=lambda x: K.transpose(x)):
+    if not fully_differentiable:
+        w_ = K.stop_gradient(w)
+    else:
+        w_ = w
     u = K.expand_dims(u, axis=-1)
-    v_bar = ktf.matmul(transpose(w), u)
-    v_bar = K.l2_normalize(v_bar, axis=(-1, -2))
 
-    u_bar_raw = ktf.matmul(w, v_bar)
-    u_bar = K.l2_normalize(u_bar_raw, axis=(-1, -2))
-    sigma = ktf.matmul(transpose(u_bar), u_bar_raw)
+    for _ in range(ip):
+        v_bar = ktf.matmul(transpose(w_), u)
+        v_bar = K.l2_normalize(v_bar, axis=(-1, -2))
+
+        u_bar_raw = ktf.matmul(w_, v_bar)
+        u_bar = K.l2_normalize(u_bar_raw, axis=(-1, -2))
+    sigma = ktf.matmul(transpose(u_bar), ktf.matmul(w, v_bar))
 
     sigma = K.squeeze(sigma, axis=-1)
     sigma = K.squeeze(sigma, axis=-1)
-
-    #sigma = K.stop_gradient(sigma)
 
     u_bar = K.squeeze(u_bar, axis=-1)
     return sigma, u_bar
@@ -269,4 +273,4 @@ def test_conditional_dense():
 
 
 if __name__ == "__main__":
-    test_conditional_conv()
+    test_dense()

@@ -224,11 +224,14 @@ class ConditionalConv11(Layer):
         cls = inputs[1]
         x = inputs[0]
 
-        _, w, h, in_c = K.int_shape(x)
+        
         ### Preprocess input
         #(bs, w, h, c)
         if self.data_format != 'channels_first':
             x = ktf.transpose(x,  [0, 3, 1, 2])
+            _, in_c, w, h = K.int_shape(x)
+	else:
+	   _, w, h, in_c = K.int_shape(x)
         #(bs, c, w, h)
         x = ktf.reshape(x, (-1, in_c, w * h))
         #(bs, c, w*h)
@@ -564,8 +567,10 @@ class ConditionalDense(Layer):
 
 
 def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, name,
-                  norm=BatchNormalization, is_first=False, conv_shortcut=True, conv_layer=Conv2D,
-                  cond_bottleneck_layer=ConditionalConv11, uncond_bottleneck_layer=Conv2D):
+                  norm=BatchNormalization, is_first=False, conv_layer=Conv2D,
+                  cond_conv_layer=ConditionalConv11,
+                  cond_bottleneck=False, uncond_bottleneck=False,
+                  uncond_shortcut=True, cond_shortcut=False):
     assert resample in ["UP", "SAME", "DOWN"]
 
     feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
@@ -582,13 +587,30 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     else:
         resample_op = identity
 
+    def conditional_plus_unconditional_block(inp, cond, uncond, sub_name):
+        merge_layers = []
+
+        if cond:
+            cond_bottleneck_path = cond_conv_layer(number_of_classes=number_of_classes, filters=nfilters,
+                                         kernel_initializer=he_init, name=name + '_cond_' + sub_name)([inp, cls])
+            merge_layers.append(cond_bottleneck_path)
+
+        if uncond:
+            uncond_bottleneck_path = conv_layer(kernel_size=(1, 1), filters=nfilters,
+                                     kernel_initializer=he_init, name=name + '_uncond_' + sub_name)(inp)
+            merge_layers.append(uncond_bottleneck_path)
+
+        out = inp
+        if len(merge_layers) == 2:
+            out = Add()(merge_layers)
+        elif len(merge_layers) == 1:
+            out = merge_layers[0]
+
+        return out
 
     ### SHORTCUT PAHT
-    shortcut = x
-    if conv_shortcut:
-        shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), padding='same',
-                          kernel_initializer=glorot_init, use_bias=True, name=name + '_shortcut')(shortcut)
-        shortcut = resample_op(shortcut)
+    shortcut = conditional_plus_unconditional_block(x, cond_shortcut, uncond_shortcut, 'shortcut')
+    shortcut = resample_op(shortcut)
 
     ### CONV PATH
     convpath = x
@@ -601,23 +623,8 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
                                       use_bias=True, padding='same', name=name + '_conv1')(convpath)
 
-    merge_layers = []
 
-    if cond_bottleneck_layer is not None:
-        cond_bottleneck_path = cond_bottleneck_layer(number_of_classes=number_of_classes, filters=nfilters,
-                                     kernel_initializer=he_init, name=name + '_cond_bottle')([convpath, cls])
-        merge_layers.append(cond_bottleneck_path)
-
-    if uncond_bottleneck_layer is not None:
-        uncond_bottleneck_path = uncond_bottleneck_layer(kernel_size=(1, 1), filters=nfilters,
-                                 kernel_initializer=he_init, name=name + '_uncond_bottle')(convpath)
-        merge_layers.append(uncond_bottleneck_path)
-
-
-    if len(merge_layers) == 2:
-        convpath = Add()(merge_layers)
-    elif len(merge_layers) == 1:
-        convpath = merge_layers[0]
+    convpath = conditional_plus_unconditional_block(convpath, cond_bottleneck, uncond_bottleneck, 'bottleneck')
 
     convpath = norm(axis=feature_axis, name=name + '_bn2')(convpath)
     convpath = Activation('relu')(convpath)
@@ -627,7 +634,7 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     if resample == "DOWN":
         convpath = resample_op(convpath)
 
-    y = Add() ([shortcut, convpath])
+    y = Add()([shortcut, convpath])
 
     return y
 
