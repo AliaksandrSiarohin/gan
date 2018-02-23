@@ -609,8 +609,12 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
         return out
 
     ### SHORTCUT PAHT
-    shortcut = conditional_plus_unconditional_block(x, cond_shortcut, uncond_shortcut, 'shortcut')
-    shortcut = resample_op(shortcut)
+    if is_first:
+        shortcut = resample_op(x)
+        shortcut = conditional_plus_unconditional_block(shortcut, cond_shortcut, uncond_shortcut, 'shortcut')
+    else:
+        shortcut = conditional_plus_unconditional_block(x, cond_shortcut, uncond_shortcut, 'shortcut')
+        shortcut = resample_op(shortcut)
 
     ### CONV PATH
     convpath = x

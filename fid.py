@@ -236,22 +236,15 @@ m_true_data = None
 s_true_data = None
 
 def calculate_fid_given_arrays(arrays):
-    new_arrays = []
     print ("Computing FID...")
     global m_true_data, s_true_data
-    for array in arrays:
-        if array.shape[-1] != 3:
-            #hack for grayscale mnist
-            array = np.concatenate([array, array, array], axis=-1)
-        new_arrays.append(array)
-
     inception_path = check_or_download_inception(None)
     create_inception_graph(str(inception_path))
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         if m_true_data is None:
-            m_true_data, s_true_data = calculate_activation_statistics(new_arrays[0], sess)
-        m, s = calculate_activation_statistics(new_arrays[1], sess)
+            m_true_data, s_true_data = calculate_activation_statistics(arrays[0], sess)
+        m, s = calculate_activation_statistics(arrays[1], sess)
         fid_value = calculate_frechet_distance(m_true_data, s_true_data, m, s)
 
     return fid_value
