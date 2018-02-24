@@ -15,7 +15,10 @@ class GAN(object):
                  gradient_penalty_type='dragan',
                  additional_inputs_for_generator_train=[],
                  additional_inputs_for_discriminator_train=[],
-                 custom_objects={},**kwargs):
+                 custom_objects={},
+                 lr_decay_schedule_generator=lambda iter: 1.0,
+                 lr_decay_schedule_discriminator=lambda iter: 1.0,
+                 **kwargs):
 
         assert generator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan', 'hinge']
         assert discriminator_adversarial_objective in ['ns-gan', 'lsgan', 'wgan', 'hinge']
@@ -56,6 +59,9 @@ class GAN(object):
         self.additional_inputs_for_discriminator_train=additional_inputs_for_discriminator_train
         self.gradient_penalty_weight = gradient_penalty_weight
         self.gradient_penalty_type = gradient_penalty_type
+
+        self.lr_decay_schedule_generator = lr_decay_schedule_generator
+        self.lr_decay_schedule_discriminator = lr_decay_schedule_discriminator
 
         self.generator_metric_names = []
         self.discriminator_metric_names = []
@@ -211,6 +217,10 @@ class GAN(object):
         updates = self.generator_optimizer.get_updates(params=self.generator.trainable_weights, loss=sum(loss_list))
         updates += self.generator.updates
 
+        lr_update = (self.lr_decay_schedule_generator(self.generator_optimizer.iterations) *
+                                K.get_value(self.generator_optimizer.lr))
+        updates.append(K.update(self.generator_optimizer.lr, lr_update))
+
         train_op = function(self.generator_input + self.additional_inputs_for_generator_train + [K.learning_phase()],
                             [sum(loss_list)] + loss_list, updates=updates)
         return train_op
@@ -227,6 +237,10 @@ class GAN(object):
 
         inputs = self.discriminator_input + self.additional_inputs_for_discriminator_train +\
                  self.generator_input + self.additional_inputs_for_generator_train
+
+        lr_update = (self.lr_decay_schedule_discriminator(self.discriminator_optimizer.iterations) *
+                                K.get_value(self.discriminator_optimizer.lr))
+        updates.append(K.update(self.discriminator_optimizer.lr, lr_update))
 
         train_op = function(inputs + [K.learning_phase()], [sum(loss_list)] + loss_list, updates=updates)
         return train_op

@@ -16,7 +16,7 @@ def parser_with_default_args():
     parser.add_argument("--discriminator_adversarial_objective", default='ns-gan', choices=['ns-gan', 'lsgan', 'wgan', 'hinge'])
     parser.add_argument("--gradient_penalty_type", default='wgan-gp', choices=['wgan-gp', 'dragan'])
 
-    parser.add_argument("--number_of_epochs", default=500, type=int, help="Number of training epochs")
+    parser.add_argument("--number_of_epochs", default=100, type=int, help="Number of training epochs")
     
     parser.add_argument("--checkpoints_dir", default="output/checkpoints", help="Folder with checkpoints")
     parser.add_argument("--checkpoint_ratio", default=10, type=int, help="Number of epochs between consecutive checkpoints")    

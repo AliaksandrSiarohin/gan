@@ -18,8 +18,7 @@ class Trainer(object):
                  checkpoints_dir='output/checkpoints', training_ratio=5,
                  display_ratio=1, checkpoint_ratio=10, start_epoch=0,
                  number_of_epochs=100, batch_size=64, generator_batch_multiple=2,
-                 at_store_checkpoint_hook = None, save_weights_only=True,
-                 lr_decay_shedule = None, **kwargs):
+                 at_store_checkpoint_hook = None, save_weights_only=True, **kwargs):
         self.dataset = dataset
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs
@@ -42,20 +41,6 @@ class Trainer(object):
         self.training_ratio = training_ratio
         self.display_ratio = display_ratio
         self.checkpoint_ratio = checkpoint_ratio
-        self._iteration = 0
-
-        self.lr_decay_shedule = lr_decay_shedule
-        if self.lr_decay_shedule == 'linear':
-            self.start_lr_generator = K.get_value(self.gan.generator_optimizer.lr)
-            self.start_lr_discriminator = K.get_value(self.gan.discriminator_optimizer.lr)
-            print (self.start_lr_discriminator)
-            print (self.start_lr_generator)
-            number_of_batches_per_epoch = self.dataset.number_of_batches_per_epoch()
-            number_of_itrations = self.last_epoch * number_of_batches_per_epoch
-            start_iteration = start_epoch * number_of_batches_per_epoch
-
-            self.lr_decay_shedule = lambda x: max(0.01,
-                1 - float(x + start_iteration) / number_of_itrations)
 
 
     def save_generated_images(self):
@@ -100,10 +85,7 @@ class Trainer(object):
             generator_batch = self.dataset.next_generator_sample()
         loss = self.generator_train_op(generator_batch + [True])
         generator_loss_list.append(loss)
-        self._iteration += 1
-        if self.lr_decay_shedule is not None:
-            K.set_value(self.gan.generator_optimizer.lr, self.start_lr_generator * self.lr_decay_shedule(self._iteration))
-            K.set_value(self.gan.discriminator_optimizer.lr, self.start_lr_discriminator * self.lr_decay_shedule(self._iteration))
+
 
     def train_one_epoch(self, validation_epoch=False):
         print("Epoch: %i" % self.current_epoch)
@@ -133,6 +115,9 @@ class Trainer(object):
             val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis=0),
                                                                       np.mean(np.array(discriminator_loss_list), axis=0))
             print (val_loss_str.replace('Generator loss', 'Validation loss'))
+
+        print "Generator lr %s" % K.get_value(self.gan.discriminator_optimizer.lr)
+        print "Discriminator lr %s" % K.get_value(self.gan.generator_optimizer.lr)
         
     def train(self):
         while (self.current_epoch < self.last_epoch):            
