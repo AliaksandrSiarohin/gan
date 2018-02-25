@@ -60,6 +60,7 @@ class SNConv2D(Conv2D):
         self.conv_singular = conv_singular
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
+        self.stateful = True
         super(SNConv2D, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -86,7 +87,7 @@ class SNConv2D(Conv2D):
                                                             padding=self.padding,
                                                             strides=self.strides, data_format=self.data_format)
             kernel_sn = self.kernel / sigma
-            self.updates.append(K.update(self.u, u_bar))
+            self.add_update(K.update(self.u, u_bar))
         else:
             kernel_shape = K.int_shape(self.kernel)
             w = K.reshape(self.kernel, (kernel_shape[0] * kernel_shape[1] * kernel_shape[2], kernel_shape[3]))
@@ -98,7 +99,7 @@ class SNConv2D(Conv2D):
 
             kernel_sn = K.reshape(w_sn, kernel_shape)
 
-            self.updates.append(K.update(self.u, u_bar))
+            self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
         self.kernel = kernel_sn
@@ -114,6 +115,7 @@ class SNDense(Dense):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
+        self.stateful = True
         super(SNDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -131,7 +133,7 @@ class SNDense(Dense):
                                             ip=self.spectral_iterations)
         w_sn = w / sigma
         kernel_sn = w_sn
-        self.updates.append(K.update(self.u, u_bar))
+        self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
         self.kernel = kernel_sn
@@ -147,6 +149,7 @@ class SNConditionalConv11(ConditionalConv11):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
+        self.stateful = True
         super(SNConditionalConv11, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -164,7 +167,7 @@ class SNConditionalConv11(ConditionalConv11):
         sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
                                         fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
-        self.updates.append(K.update(self.u, u_bar))
+        self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
         self.kernel = self.kernel / sigma
@@ -179,6 +182,7 @@ class SNCondtionalDense(ConditionalDense):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
+        self.stateful = True
         super(SNCondtionalDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -196,7 +200,7 @@ class SNCondtionalDense(ConditionalDense):
         sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
                                         fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
-        self.updates.append(K.update(self.u, u_bar))
+        self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
         self.kernel = self.kernel / sigma
@@ -218,7 +222,7 @@ def test_conv_with_conv_spectal():
     m = Model([inp], [out])
     x = np.arange(3 * 3).reshape((1, 3, 3, 1))
     for i in range(100):
-        K.get_session().run(m.layers[1].updates, feed_dict={inp:x})
+        m.predict([x])
 
     kernel = K.get_value(m.layers[1].kernel)
     u_val = K.get_value(m.layers[1].u)
@@ -279,7 +283,7 @@ def test_dense():
     m = Model([inp], [out])
     x = np.arange(5 * 10).reshape((10, 5))
     for i in range(50):
-        K.get_session().run(m.layers[1].updates, feed_dict={inp:x})
+        m.predict([x])
 
     kernel = K.get_value(m.layers[1].kernel)
     u_val = K.get_value(m.layers[1].u)
@@ -305,7 +309,7 @@ def test_iterations():
     m = Model([inp], [out])
     x = np.arange(5 * 10).reshape((10, 5))
     for i in range(1):
-        K.get_session().run(m.layers[1].updates, feed_dict={inp:x})
+        m.predict([x])
 
     kernel = K.get_value(m.layers[1].kernel)
     u_val = K.get_value(m.layers[1].u)
@@ -331,7 +335,7 @@ def test_conv2D():
     m = Model([inp], [out])
     x = np.arange(5 * 2 * 3 * 4).reshape((5, 2, 3, 4))
     for i in range(100):
-        K.get_session().run(m.layers[1].updates, feed_dict={inp:x})
+        m.predict([x])
 
     kernel = K.get_value(m.layers[1].kernel)
     u_val = K.get_value(m.layers[1].u)
@@ -362,7 +366,7 @@ def test_conditional_conv():
     cls_val = (np.arange(5) % 3)[:,np.newaxis]
 
     for i in range(100):
-        K.get_session().run(m.layers[2].updates, feed_dict={inp:x, cls:cls_val})
+        m.predict([x, cls_val])
 
     kernel_all = K.get_value(m.layers[2].kernel)
     u_val_all = K.get_value(m.layers[2].u)
@@ -386,6 +390,7 @@ def test_conditional_dense():
     import numpy as np
     from numpy.linalg import svd
     def kernel_init(shape):
+        np.random.seed(0)
         return np.random.normal(size=shape)
 
     inp = Input((4, ))
@@ -396,7 +401,7 @@ def test_conditional_dense():
     cls_val = (np.arange(5) % 3)[:,np.newaxis]
 
     for i in range(100):
-        K.get_session().run(m.layers[2].updates, feed_dict={inp:x, cls:cls_val})
+        m.predict([x, cls_val])
 
     kernel_all = K.get_value(m.layers[2].kernel)
     u_val_all = K.get_value(m.layers[2].u)
@@ -419,6 +424,7 @@ if __name__ == "__main__":
     test_conditional_dense()
     test_conditional_conv()
     test_conv2D()
+    test_dense()
     test_singular_val_for_convolution()
     test_conv_with_conv_spectal()
     test_iterations()
