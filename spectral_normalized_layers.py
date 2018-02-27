@@ -55,12 +55,12 @@ def max_singular_val_for_convolution(w, u, fully_differentiable=False, ip=1, pad
 
 class SNConv2D(Conv2D):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), conv_singular=False,
-                 fully_diff_spectral=True, spectral_iterations=1, **kwargs):
+                 fully_diff_spectral=True, spectral_iterations=1, stateful=False, **kwargs):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.conv_singular = conv_singular
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-        self.stateful = True
+	self.stateful = stateful
         super(SNConv2D, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -111,12 +111,12 @@ class SNConv2D(Conv2D):
 
 class SNDense(Dense):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
-                 fully_diff_spectral=True, **kwargs):
+                 fully_diff_spectral=True, stateful=False, **kwargs):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-        self.stateful = True
-        super(SNDense, self).__init__(**kwargs)
+       	self.stateful = stateful
+	super(SNDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
         super(SNDense, self).build(input_shape)
@@ -145,11 +145,11 @@ class SNDense(Dense):
 
 class SNConditionalConv11(ConditionalConv11):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
-                 fully_diff_spectral=True, **kwargs):
+                 fully_diff_spectral=True,  stateful=False, **kwargs):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-        self.stateful = True
+        self.stateful = stateful
         super(SNConditionalConv11, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -178,11 +178,11 @@ class SNConditionalConv11(ConditionalConv11):
 
 class SNCondtionalDense(ConditionalDense):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
-                 fully_diff_spectral=True, **kwargs):
+                 fully_diff_spectral=True,  stateful=False, **kwargs):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-        self.stateful = True
+        self.stateful = stateful
         super(SNCondtionalDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -218,7 +218,7 @@ def test_conv_with_conv_spectal():
         return np.random.normal(size=shape)
 
     inp = Input((3, 3, 1))
-    out = SNConv2D(kernel_size=(2, 2), padding='valid', filters=1, kernel_initializer=kernel_init, conv_singular=True)(inp)
+    out = SNConv2D(kernel_size=(2, 2), padding='valid', filters=1, kernel_initializer=kernel_init, stateful=True, conv_singular=True)(inp)
     m = Model([inp], [out])
     x = np.arange(3 * 3).reshape((1, 3, 3, 1))
     for i in range(100):
@@ -279,7 +279,7 @@ def test_dense():
         return np.random.normal(size=shape)
 
     inp = Input((5, ))
-    out = SNDense(units=10, kernel_initializer=kernel_init)(inp)
+    out = SNDense(units=10, kernel_initializer=kernel_init, stateful=True)(inp)
     m = Model([inp], [out])
     x = np.arange(5 * 10).reshape((10, 5))
     for i in range(50):
@@ -305,7 +305,7 @@ def test_iterations():
         return np.random.normal(size=shape)
 
     inp = Input((5, ))
-    out = SNDense(units=10, kernel_initializer=kernel_init, spectral_iterations=50)(inp)
+    out = SNDense(units=10, kernel_initializer=kernel_init, spectral_iterations=50, stateful=True)(inp)
     m = Model([inp], [out])
     x = np.arange(5 * 10).reshape((10, 5))
     for i in range(1):
@@ -331,7 +331,7 @@ def test_conv2D():
         return np.random.normal(size=shape)
 
     inp = Input((2, 3, 4))
-    out = SNConv2D(kernel_size=(3, 3), padding='same', filters=10, kernel_initializer=kernel_init)(inp)
+    out = SNConv2D(kernel_size=(3, 3), padding='same', filters=10, kernel_initializer=kernel_init, stateful=True)(inp)
     m = Model([inp], [out])
     x = np.arange(5 * 2 * 3 * 4).reshape((5, 2, 3, 4))
     for i in range(100):
@@ -360,7 +360,7 @@ def test_conditional_conv():
 
     inp = Input((2, 3, 4))
     cls = Input((1, ), dtype='int32')
-    out = SNConditionalConv11(number_of_classes=3, filters=10, kernel_initializer=kernel_init)([inp, cls])
+    out = SNConditionalConv11(number_of_classes=3, filters=10, kernel_initializer=kernel_init, stateful=True)([inp, cls])
     m = Model([inp, cls], [out])
     x = np.arange(5 * 2 * 3 * 4).reshape((5, 2, 3, 4))
     cls_val = (np.arange(5) % 3)[:,np.newaxis]
@@ -395,7 +395,7 @@ def test_conditional_dense():
 
     inp = Input((4, ))
     cls = Input((1, ), dtype='int32')
-    out = SNCondtionalDense(number_of_classes=3, units=10, kernel_initializer=kernel_init)([inp, cls])
+    out = SNCondtionalDense(number_of_classes=3, units=10, kernel_initializer=kernel_init, stateful=True)([inp, cls])
     m = Model([inp, cls], [out])
     x = np.arange(5 * 4).reshape((5, 4))
     cls_val = (np.arange(5) % 3)[:,np.newaxis]
