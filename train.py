@@ -130,3 +130,4 @@ class Trainer(object):
 
         if (self.current_epoch + 1) % self.display_ratio == 0:
                 self.save_generated_images()
+	self.make_checkpoint()
