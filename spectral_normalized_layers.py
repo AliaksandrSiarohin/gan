@@ -1,4 +1,4 @@
-from keras.layers import Conv2D, Dense
+from keras.layers import Conv2D, Dense, Embedding
 import keras.initializers
 from keras import backend as K
 from keras.backend import tf as ktf
@@ -56,12 +56,12 @@ def max_singular_val_for_convolution(w, u, fully_differentiable=False, ip=1, pad
 class SNConv2D(Conv2D):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), conv_singular=False,
                  fully_diff_spectral=True, spectral_iterations=1, stateful=False, **kwargs):
+        super(SNConv2D, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.conv_singular = conv_singular
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
-        super(SNConv2D, self).__init__(**kwargs)
 
     def build(self, input_shape):
         super(SNConv2D, self).build(input_shape)
@@ -112,11 +112,11 @@ class SNConv2D(Conv2D):
 class SNDense(Dense):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
                  fully_diff_spectral=True, stateful=False, **kwargs):
+        super(SNDense, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
-        super(SNDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
         super(SNDense, self).build(input_shape)
@@ -143,18 +143,54 @@ class SNDense(Dense):
         return outputs
 
 
+class SNEmbeding(Embedding):
+    def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
+                 fully_diff_spectral=True, stateful=False, **kwargs):
+        super(SNEmbeding, self).__init__(**kwargs)
+        self.sigma_initializer = keras.initializers.get(sigma_initializer)
+        self.fully_diff_spectral = fully_diff_spectral
+        self.spectral_iterations = spectral_iterations
+        self.stateful = stateful
+
+
+    def build(self, input_shape):
+        super(SNEmbeding, self).build(input_shape)
+        kernel_shape = K.int_shape(self.embeddings)
+        self.u = self.add_weight(
+            shape=(kernel_shape[0], ),
+            name='largest_singular_value',
+            initializer=self.sigma_initializer,
+            trainable=False)
+
+    def call(self, inputs):
+        w = self.embeddings
+        sigma, u_bar = max_singular_val(w, self.u, fully_differentiable=self.fully_diff_spectral,
+                                            ip=self.spectral_iterations)
+        w_sn = w / sigma
+        kernel_sn = w_sn
+        self.add_update(K.update(self.u, u_bar))
+
+        embeddings = self.embeddings
+        self.embeddings = kernel_sn
+        outputs = super(SNEmbeding, self).call(inputs)
+        self.embeddings = embeddings
+
+        return outputs
+
+
 class SNConditionalConv11(ConditionalConv11):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
                  fully_diff_spectral=True,  stateful=False, renormalize=False, **kwargs):
         """
         renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
         """
+        super(SNConditionalConv11, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
         self.renormalize = renormalize
-        super(SNConditionalConv11, self).__init__(**kwargs)
+
 
     def build(self, input_shape):
         super(SNConditionalConv11, self).build(input_shape)
@@ -189,13 +225,13 @@ class SNCondtionalDense(ConditionalDense):
         """
         renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
         """
-
+        super(SNCondtionalDense, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
         self.renormalize = renormalize
-        super(SNCondtionalDense, self).__init__(**kwargs)
+
 
     def build(self, input_shape):
         super(SNCondtionalDense, self).build(input_shape)
@@ -308,6 +344,30 @@ def test_dense():
     u = K.placeholder(u_val.shape)
     max_sg_fun = K.function([w, u], [max_singular_val(w, u)[0]])
 
+    assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
+
+
+def test_emb():
+    from keras.models import Model, Input
+    import numpy as np
+    from numpy.linalg import svd
+    def kernel_init(shape):
+        return np.random.normal(size=shape)
+    np.random.seed(0)
+    inp = Input((1, ), dtype='int32')
+    out = SNEmbeding(input_dim=10, output_dim=10, embeddings_initializer=kernel_init, stateful=True)(inp)
+    m = Model([inp], [out])
+    cls_val = (np.arange(5) % 3)[:,np.newaxis]
+    for i in range(100):
+        m.predict([cls_val])
+    kernel = K.get_value(m.layers[1].embeddings)
+    u_val = K.get_value(m.layers[1].u)
+
+    _, s, _ = svd(kernel)
+
+    w = K.placeholder(kernel.shape)
+    u = K.placeholder(u_val.shape)
+    max_sg_fun = K.function([w, u], [max_singular_val(w, u)[0]])
     assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
 
 
@@ -457,12 +517,13 @@ def test_conditional_dense_with_renorm():
 
 
 if __name__ == "__main__":
+    test_emb()
     test_conditional_dense_with_renorm()
-    # test_conv_with_conv_spectal()
-    # test_conditional_dense()
-    # test_conditional_conv()
-    # test_conv2D()
-    # test_dense()
-    # test_singular_val_for_convolution()
-    # test_conv_with_conv_spectal()
-    # test_iterations()
+    test_conv_with_conv_spectal()
+    test_conditional_dense()
+    test_conditional_conv()
+    test_conv2D()
+    test_dense()
+    test_singular_val_for_convolution()
+    test_conv_with_conv_spectal()
+    test_iterations()
