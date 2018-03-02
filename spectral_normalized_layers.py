@@ -60,7 +60,7 @@ class SNConv2D(Conv2D):
         self.conv_singular = conv_singular
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-	self.stateful = stateful
+        self.stateful = stateful
         super(SNConv2D, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -115,8 +115,8 @@ class SNDense(Dense):
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
-       	self.stateful = stateful
-	super(SNDense, self).__init__(**kwargs)
+        self.stateful = stateful
+        super(SNDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
         super(SNDense, self).build(input_shape)
@@ -145,11 +145,15 @@ class SNDense(Dense):
 
 class SNConditionalConv11(ConditionalConv11):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
-                 fully_diff_spectral=True,  stateful=False, **kwargs):
+                 fully_diff_spectral=True,  stateful=False, renormalize=False, **kwargs):
+        """
+        renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
+        """
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
+        self.renormalize = renormalize
         super(SNConditionalConv11, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -167,6 +171,9 @@ class SNConditionalConv11(ConditionalConv11):
         sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
                                         fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
+        if self.renormalize:
+             sigma = sigma * np.sqrt(self.number_of_classes)
+ 
         self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
@@ -178,11 +185,16 @@ class SNConditionalConv11(ConditionalConv11):
 
 class SNCondtionalDense(ConditionalDense):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
-                 fully_diff_spectral=True,  stateful=False, **kwargs):
+                 fully_diff_spectral=True,  stateful=False, renormalize=False, **kwargs):
+        """
+        renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
+        """
+
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
         self.stateful = stateful
+        self.renormalize = renormalize
         super(SNCondtionalDense, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -200,6 +212,8 @@ class SNCondtionalDense(ConditionalDense):
         sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
                                         fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
         sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
+        if self.renormalize:
+             sigma = sigma * np.sqrt(self.number_of_classes)
         self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
@@ -419,12 +433,36 @@ def test_conditional_dense():
         assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
 
 
+def test_conditional_dense_with_renorm():
+    from keras.models import Model, Input
+    import numpy as np
+    from numpy.linalg import svd
+    def kernel_init(shape):
+        np.random.seed(0)
+        return np.random.normal(size=shape)
+    number_of_classes = 10
+    inp = Input((4, ))
+    cls = Input((1, ), dtype='int32')
+    out = SNCondtionalDense(number_of_classes=number_of_classes, units=10, kernel_initializer=kernel_init, stateful=True, renormalize=True)([inp, cls])
+    m = Model([inp, cls], [out])
+    x = np.identity(4)
+    cls_val = (np.zeros(shape=(4, )))[:,np.newaxis]
+
+    for i in range(100):
+        m.predict([x, cls_val])
+
+    kernel_normed = m.predict([x, cls_val])
+
+    assert (svd(kernel_normed)[1][0] - 1 / np.sqrt(number_of_classes)) < 1e-5
+
+
 if __name__ == "__main__":
-    test_conv_with_conv_spectal()
-    test_conditional_dense()
-    test_conditional_conv()
-    test_conv2D()
-    test_dense()
-    test_singular_val_for_convolution()
-    test_conv_with_conv_spectal()
-    test_iterations()
+    test_conditional_dense_with_renorm()
+    # test_conv_with_conv_spectal()
+    # test_conditional_dense()
+    # test_conditional_conv()
+    # test_conv2D()
+    # test_dense()
+    # test_singular_val_for_convolution()
+    # test_conv_with_conv_spectal()
+    # test_iterations()

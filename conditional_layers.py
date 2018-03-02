@@ -7,6 +7,33 @@ from keras import activations
 from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, Add, AveragePooling2D, Reshape
 
 from layer_utils import he_init, glorot_init
+from keras.optimizers import Adam
+
+class ConditionalAdamOptimizer(Adam):
+    def __init__(self, number_of_classes, **kwargs):
+        super(ConditionalAdamOptimizer, self).__init__(**kwargs)
+        self.number_of_classes = number_of_classes
+        self.lr_conditional = number_of_classes * K.variable(self.lr, name='lr')
+
+    def get_updates(self, loss, params):
+        conditional_params = [param for param in params if '_cond_' in param.name]
+        unconditional_params = [param for param in params if '_cond_' not in param.name]
+
+        print (conditional_params)
+        print (unconditional_params)
+
+        print (len(params))
+        print (len(conditional_params))
+        print (len(unconditional_params))
+
+        lr = self.lr
+        self.lr = self.lr_conditional
+        updates = super(ConditionalAdamOptimizer, self).get_updates(loss, conditional_params)
+        self.lr = lr
+        updates += super(ConditionalAdamOptimizer, self).get_updates(loss, unconditional_params)
+
+        return updates
+
 
 class ConditionalInstanceNormalization(Layer):
     """Conditional Instance normalization layer.
@@ -468,6 +495,8 @@ class ConditionalConv2D(Layer):
         }
         base_config = super(ConditionalConv2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
 
 
 class ConditionalDense(Layer):
