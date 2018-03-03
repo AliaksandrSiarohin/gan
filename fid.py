@@ -232,18 +232,23 @@ def calculate_fid_given_paths(paths, inception_path):
         fid_value = calculate_frechet_distance(m1, s1, m2, s2)
         return fid_value
 
-m_true_data = None
-s_true_data = None
 
-def calculate_fid_given_arrays(arrays):
+def calculate_fid_given_arrays(arrays, cache_file=None):
     print ("Computing FID...")
     global m_true_data, s_true_data
     inception_path = check_or_download_inception(None)
     create_inception_graph(str(inception_path))
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        if m_true_data is None:
+        if cache_file is None:
             m_true_data, s_true_data = calculate_activation_statistics(arrays[0], sess)
+        else:
+            if not os.path.exists(cache_file):
+                m_true_data, s_true_data = calculate_activation_statistics(arrays[0], sess)
+                np.savez(cache_file, m_true_data, s_true_data)
+            else:
+                npzfile = np.load(cache_file)
+                m_true_data, s_true_data = npzfile['arr_0'], npzfile['arr_1']
         m, s = calculate_activation_statistics(arrays[1], sess)
         fid_value = calculate_frechet_distance(m_true_data, s_true_data, m, s)
 
