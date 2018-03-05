@@ -915,24 +915,42 @@ class ConditionalDense(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-# def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
-#                                    conditional_conv_layer=ConditionalDepthwiseConv2D, **kwargs):
-#     def layer(x):
-#         ch_out = kwargs['filters']
-#         ch_in = K.int_shape(x)[1 if K.image_data_format() == 'channels_first' else -1]
-#
-#         if ch_in != ch_out:
-#             out = conv_layer(kernel_size=(1, 1), filters=ch_out, kernel_initializer=glorot_init,
-#                                              name=kwargs['name'] + '-preprocess_part')(x)
-#         else:
-#             out = x
-#         out = conditional_conv_layer(number_of_classes=number_of_classes, filters=ch_out,
-#                                         kernel_size=kwargs['kernel_size'], padding='same',
-#                                         name=kwargs['name'] + '-depthwise_part')([out, cls])
-#         out = conv_layer(kernel_size=(1, 1), filters=ch_out, kernel_initializer=glorot_init,
-#                                              name=kwargs['name'] + '-conv11_part')(out)
-#         return out
-#     return layer
+def get_separable_conv(cls, number_of_classes, conv11_layer=Conv2D,
+                       conv_layer=ConditionalDepthwiseConv2D, conditional_conv11=False,
+                       conditional_conv=False, **kwargs):
+    def layer(x):
+        ch_out = kwargs['filters']
+        ch_in = K.int_shape(x)[1 if K.image_data_format() == 'channels_first' else -1]
+
+        if ch_in != ch_out:
+            if conditional_conv11:
+                out = conv11_layer(filters=ch_out, kernel_initializer=glorot_init,
+                                 number_of_classes=number_of_classes, name=kwargs['name'] + '-preprocess_part')([x, cls])
+            else:
+                out = conv11_layer(filters=ch_out, kernel_initializer=glorot_init, name=kwargs['name'] + '-preprocess_part')
+        else:
+            out = x
+
+        if conditional_conv:
+            out = conv_layer(number_of_classes=number_of_classes, filters=ch_out,
+                             kernel_size=kwargs['kernel_size'], padding='same',
+                             name=kwargs['name'] + '-depthwise_part')([out, cls])
+        else:
+            out = conv_layer(filters=ch_out,
+                             kernel_size=kwargs['kernel_size'], padding='same',
+                             name=kwargs['name'] + '-depthwise_part')(out)
+
+        if conditional_conv11:
+            out = conv_layer(number_of_classes=number_of_classes, kernel_size=(1, 1),
+                             filters=ch_out, kernel_initializer=glorot_init,
+                             name=kwargs['name'] + '-conv11_part')([out, cls])
+        else:
+            out = conv_layer(kernel_size=(1, 1), filters=ch_out, kernel_initializer=glorot_init,
+                             name=kwargs['name'] + '-conv11_part')(out)
+        return out
+
+    return layer
+
 
 def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
                                    conditional_conv_layer=ConditionalConv11, **kwargs):
@@ -941,9 +959,14 @@ def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
         ch_in = K.int_shape(x)[1 if K.image_data_format() == 'channels_first' else -1]
         out = conv_layer(filters=ch_in, kernel_size=kwargs['kernel_size'], padding='same', kernel_initializer=he_init,
                                         name=kwargs['name'] + '-u_part')(x)
-        out = conditional_conv_layer(number_of_classes=number_of_classes, filters=ch_out,
-                                     kernel_initializer=glorot_init, name=kwargs['name'] + '-c_part')([out, cls])
-        return out
+        if ch_in != ch_out:
+            out_u = conv_layer(filters=ch_out, kernel_size=(1, 1),
+                               kernel_initializer=glorot_init, name=kwargs['name'] + '-pr_part')(out)
+        else:
+            out_u = out
+        out_c = conditional_conv_layer(number_of_classes=number_of_classes, filters=ch_out,
+                                       kernel_initializer=glorot_init, name=kwargs['name'] + '-c_part')([out, cls])
+        return Add()([out_u, out_c])
     return layer
 
 def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, name,
