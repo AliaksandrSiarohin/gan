@@ -188,70 +188,10 @@ class ConditionalInstanceNormalization(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-class ConditinalBatchNormalization(Layer):
-    """Conditional Instance normalization layer.
-    Normalize the activations of the previous layer at each step,
-    i.e. applies a transformation that maintains the mean activation
-    close to 0 and the activation standard deviation close to 1.
-    Each class has it own normalization parametes.
-    # Arguments
-        number_of_classes: Number of classes, 10 for cifar10.
-        axis: Integer, the axis that should be normalized
-            (typically the features axis).
-            For instance, after a `Conv2D` layer with
-            `data_format="channels_first"`,
-            set `axis=1` in `InstanceNormalization`.
-            Setting `axis=None` will normalize all values in each instance of the batch.
-            Axis 0 is the batch dimension. `axis` cannot be set to 0 to avoid errors.
-        epsilon: Small float added to variance to avoid dividing by zero.
-        center: If True, add offset of `beta` to normalized tensor.
-            If False, `beta` is ignored.
-        scale: If True, multiply by `gamma`.
-            If False, `gamma` is not used.
-            When the next layer is linear (also e.g. `nn.relu`),
-            this can be disabled since the scaling
-            will be done by the next layer.
-        beta_initializer: Initializer for the beta weight.
-        gamma_initializer: Initializer for the gamma weight.
-        beta_regularizer: Optional regularizer for the beta weight.
-        gamma_regularizer: Optional regularizer for the gamma weight.
-        beta_constraint: Optional constraint for the beta weight.
-        gamma_constraint: Optional constraint for the gamma weight.
-    # Input shape
-        Arbitrary. Use the keyword argument `input_shape`
-        (tuple of integers, does not include the samples axis)
-        when using this layer as the first layer in a model.
-    # Output shape
-        Same shape as input.
-    # References
-        - [A Learned Representation For Artistic Style](https://arxiv.org/abs/1610.07629)
-    """
-    def __init__(self,
-                 number_of_classes,
-                 axis=None,
-                 epsilon=1e-3,
-                 center=True,
-                 scale=True,
-                 beta_initializer='zeros',
-                 gamma_initializer='ones',
-                 beta_regularizer=None,
-                 gamma_regularizer=None,
-                 beta_constraint=None,
-                 gamma_constraint=None,
-                 **kwargs):
-        super(ConditinalBatchNormalization, self).__init__(**kwargs)
+class ConditinalBatchNormalization(BatchNormalization):
+    def __init__(self, number_of_classes, **kwargs):
+        super(ConditinalBatchNormalization, self).__init__(center=False, scale=False, **kwargs)
         self.number_of_classes = number_of_classes
-        self.supports_masking = True
-        self.axis = axis
-        self.epsilon = epsilon
-        self.center = center
-        self.scale = scale
-        self.beta_initializer = initializers.get(beta_initializer)
-        self.gamma_initializer = initializers.get(gamma_initializer)
-        self.beta_regularizer = regularizers.get(beta_regularizer)
-        self.gamma_regularizer = regularizers.get(gamma_regularizer)
-        self.beta_constraint = constraints.get(beta_constraint)
-        self.gamma_constraint = constraints.get(gamma_constraint)
 
     def build(self, input_shape):
         ndim = len(input_shape[0])
@@ -270,25 +210,22 @@ class ConditinalBatchNormalization(Layer):
         else:
             shape = (self.number_of_classes, input_shape[0][self.axis])
 
-        if self.scale:
-            self.gamma = self.add_weight(shape=shape,
+        self.c_gamma = self.add_weight(shape=shape,
                                          name='gamma',
                                          initializer=self.gamma_initializer,
                                          regularizer=self.gamma_regularizer,
                                          constraint=self.gamma_constraint,
                                          trainable=True)
-        else:
-            self.gamma = None
-        if self.center:
-            self.beta = self.add_weight(shape=shape,
+
+
+        self.c_beta = self.add_weight(shape=shape,
                                         name='beta',
                                         initializer=self.beta_initializer,
                                         regularizer=self.beta_regularizer,
                                         constraint=self.beta_constraint,
                                         trainable=True)
-        else:
-            self.beta = None
-        super(ConditinalBatchNormalization, self).build(input_shape)
+        super(ConditinalBatchNormalization, self).build(input_shape[0])
+        self.input_spec = None
 
     def call(self, inputs, training=None):
         class_labels = K.squeeze(inputs[1], axis=1)
@@ -299,46 +236,24 @@ class ConditinalBatchNormalization(Layer):
         if (self.axis is not None):
             del reduction_axes[self.axis]
 
-        #del reduction_axes[0]
-
-        mean = K.mean(inputs, reduction_axes, keepdims=True)
-        stddev = K.std(inputs, reduction_axes, keepdims=True) + self.epsilon
-        normed = (inputs - mean) / stddev
+        normed = super(ConditinalBatchNormalization, self).call(inputs, training)
 
         broadcast_shape = [1] * len(input_shape)
-        #broadcast_shape[0] = K.shape(inputs)[0]
+        broadcast_shape[0] = K.shape(inputs)[0]
         if self.axis is not None:
             broadcast_shape[self.axis] = input_shape[self.axis]
 
         if self.scale:
-            broadcast_shape[0] = K.shape(inputs)[0]
-            broadcast_gamma = K.reshape(K.gather(self.gamma, class_labels), broadcast_shape)
+            broadcast_gamma = K.reshape(K.gather(self.c_gamma, class_labels), broadcast_shape)
             normed = normed * broadcast_gamma
         if self.center:
-            broadcast_shape[0] = K.shape(inputs)[0]
-            broadcast_beta = K.reshape(K.gather(self.beta, class_labels), broadcast_shape)
+            broadcast_beta = K.reshape(K.gather(self.c_beta, class_labels), broadcast_shape)
             normed = normed + broadcast_beta
         return normed
 
+
     def compute_output_shape(self, input_shape):
         return input_shape[0]
-
-    def get_config(self):
-        config = {
-            'number_of_classes': self.number_of_classes,
-            'axis': self.axis,
-            'epsilon': self.epsilon,
-            'center': self.center,
-            'scale': self.scale,
-            'beta_initializer': initializers.serialize(self.beta_initializer),
-            'gamma_initializer': initializers.serialize(self.gamma_initializer),
-            'beta_regularizer': regularizers.serialize(self.beta_regularizer),
-            'gamma_regularizer': regularizers.serialize(self.gamma_regularizer),
-            'beta_constraint': constraints.serialize(self.beta_constraint),
-            'gamma_constraint': constraints.serialize(self.gamma_constraint)
-        }
-        base_config = super(ConditinalBatchNormalization, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
 
 
 class ConditionalConv11(Layer):
@@ -941,12 +856,12 @@ def get_separable_conv(cls, number_of_classes, conv11_layer=Conv2D,
                              name=kwargs['name'] + '-depthwise_part')(out)
 
         if conditional_conv11:
-            out = conv_layer(number_of_classes=number_of_classes, kernel_size=(1, 1),
-                             filters=ch_out, kernel_initializer=glorot_init,
-                             name=kwargs['name'] + '-conv11_part')([out, cls])
+            out = conv11_layer(number_of_classes=number_of_classes,
+                               filters=ch_out, kernel_initializer=glorot_init,
+                               name=kwargs['name'] + '-conv11_part')([out, cls])
         else:
-            out = conv_layer(kernel_size=(1, 1), filters=ch_out, kernel_initializer=glorot_init,
-                             name=kwargs['name'] + '-conv11_part')(out)
+            out = conv11_layer(filters=ch_out, kernel_initializer=glorot_init,
+                               name=kwargs['name'] + '-conv11_part')(out)
         return out
 
     return layer
@@ -1125,6 +1040,7 @@ def test_conditional_bn():
         a[1] = 2
         a[2] = 3
         return a
+    K.set_learning_phase(1)
     inp = Input((2, 2, 1))
     cls = Input((1, ), dtype='int32')
     m = Model([inp, cls], ConditinalBatchNormalization(3, axis=-1, gamma_initializer=beta_init,
@@ -1138,13 +1054,10 @@ def test_conditional_bn():
     cls = np.expand_dims(np.arange(3), axis=-1)
     out = m.predict([x, cls])
     out = np.squeeze(out)
-    print (out[0])
-    print (out[1])
-    print (out[2])
 
-    # assert np.all(out[0] == 1)
-    # assert np.all(out[1] == 2)
-    # assert np.all(out[2] == 3)
+    assert np.all(np.abs(out[0] + 1.22) < 0.1)
+    assert np.all(np.abs(out[1] - 0) < 0.1)
+    assert np.all(np.abs(out[2] - 1.22) < 0.1)
 
 
 def test_conditional_conv():
@@ -1209,4 +1122,5 @@ if __name__ == "__main__":
     #test_conditional_instance()
     #test_conditional_conv11()
     #test_conditional_dense()
-    test_deptwise_conv()
+    #test_deptwise_conv()
+    test_conditional_bn()
