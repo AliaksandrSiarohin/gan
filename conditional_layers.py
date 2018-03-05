@@ -225,7 +225,6 @@ class ConditinalBatchNormalization(Layer):
     # References
         - [Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift](https://arxiv.org/abs/1502.03167)
     """
-    @interfaces.legacy_batchnorm_support
     def __init__(self,
                  number_of_classes,
                  axis=-1,
@@ -326,7 +325,7 @@ class ConditinalBatchNormalization(Layer):
             broadcast_beta = None
 
         normed, mean, variance = K.normalize_batch_in_training(
-            inputs, gamma=broadcast_gamma, beta=broadcast_beta,
+            inputs, gamma=None, beta=None,
             reduction_axes=reduction_axes, epsilon=self.epsilon)
 
         if training in {0, False}:
@@ -351,22 +350,23 @@ class ConditinalBatchNormalization(Layer):
                         inputs,
                         broadcast_moving_mean,
                         broadcast_moving_variance,
-                        beta=broadcast_beta,
-                        gamma=broadcast_gamma,
+                        beta=None,
+                        gamma=None,
                         epsilon=self.epsilon)
                 else:
                     return K.batch_normalization(
                         inputs,
                         self.moving_mean,
                         self.moving_variance,
-                        beta=broadcast_beta,
-                        gamma=broadcast_gamma,
+                        beta=None,
+                        gamma=None,
                         epsilon=self.epsilon)
 
         # Pick the normalized form corresponding to the training phase.
-        return K.in_train_phase(normed,
+        out = K.in_train_phase(normed,
                                 normalize_inference,
                                 training=training)
+        return out * broadcast_gamma + broadcast_beta
 
     def compute_output_shape(self, input_shape):
         return input_shape[0]
