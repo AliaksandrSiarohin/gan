@@ -48,7 +48,7 @@ class Trainer(object):
             batch = self.dataset.next_generator_sample_test()
         else:
             batch = self.dataset.next_generator_sample()
-        gen_images = self.generate_op(batch + [True])
+        gen_images = self.generate_op(batch + [False])
         image = self.dataset.display(gen_images, batch)
         title = "epoch_{}.png".format(str(self.current_epoch).zfill(3))
         if not os.path.exists(self.output_dir):
@@ -110,7 +110,7 @@ class Trainer(object):
             validation_loss_list = []
             for _ in tqdm(range(int(self.dataset.number_of_batches_per_validation()))):
                     generator_batch = self.dataset.next_generator_sample_test()
-                    loss = self.validate_op(generator_batch + [1])
+                    loss = self.validate_op(generator_batch + [True])
                     validation_loss_list.append(loss)
             val_loss_str, d_loss_str = self.gan.get_losses_as_string(np.mean(np.array(validation_loss_list), axis=0),
                                                                       np.mean(np.array(discriminator_loss_list), axis=0))
@@ -130,4 +130,4 @@ class Trainer(object):
 
         if (self.current_epoch + 1) % self.display_ratio == 0:
                 self.save_generated_images()
-	self.make_checkpoint()
+        self.make_checkpoint()
