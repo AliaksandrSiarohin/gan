@@ -2,7 +2,7 @@ from keras.layers import Conv2D, Dense, Embedding
 import keras.initializers
 from keras import backend as K
 from keras.backend import tf as ktf
-from conditional_layers import ConditionalConv11, ConditionalDense
+from conditional_layers import ConditionalConv11, ConditionalDense, ConditionalDepthwiseConv2D
 import numpy as np
 from keras.initializers import RandomNormal
 
@@ -182,7 +182,7 @@ class SNConditionalConv11(ConditionalConv11):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
                  fully_diff_spectral=True,  stateful=False, renormalize=False, **kwargs):
         """
-        renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
+        renormalize - if True compute only one sigma for kernel, otherwise compute sigma per class
         """
         super(SNConditionalConv11, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
@@ -191,24 +191,34 @@ class SNConditionalConv11(ConditionalConv11):
         self.stateful = stateful
         self.renormalize = renormalize
 
-
     def build(self, input_shape):
         super(SNConditionalConv11, self).build(input_shape)
         kernel_shape = K.int_shape(self.kernel)
-        self.u = self.add_weight(
-            shape=(self.number_of_classes, kernel_shape[1] * kernel_shape[2] * kernel_shape[3]),
-            name='largest_singular_value',
-            initializer=self.sigma_initializer,
-            trainable=False)
+        if not self.renormalize:
+            self.u = self.add_weight(
+                shape=(self.number_of_classes, kernel_shape[1] * kernel_shape[2] * kernel_shape[3]),
+                name='largest_singular_value',
+                initializer=self.sigma_initializer,
+                trainable=False)
+        else:
+            self.u = self.add_weight(
+                shape=(self.number_of_classes * kernel_shape[1] * kernel_shape[2] * kernel_shape[3], ),
+                name='largest_singular_value',
+                initializer=self.sigma_initializer,
+                trainable=False)
 
     def call(self, inputs):
         kernel_shape = K.int_shape(self.kernel)
-        w = K.reshape(self.kernel, (kernel_shape[0], kernel_shape[1] * kernel_shape[2] * kernel_shape[3], kernel_shape[-1]))
-        sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
-                                        fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
-        sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
-        if self.renormalize:
-             sigma = sigma * np.sqrt(self.number_of_classes)
+        if not self.renormalize:
+            w = K.reshape(self.kernel, (kernel_shape[0], kernel_shape[1] * kernel_shape[2] * kernel_shape[3], kernel_shape[-1]))
+            sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
+                                            fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
+            sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
+        else:
+            w = K.reshape(self.kernel, (-1, kernel_shape[-1]))
+            sigma, u_bar = max_singular_val(w, self.u,
+                                            fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
+
  
         self.add_update(K.update(self.u, u_bar))
 
@@ -219,11 +229,48 @@ class SNConditionalConv11(ConditionalConv11):
 
         return outputs
 
+
+class SNConditionalDepthwiseConv2D(ConditionalDepthwiseConv2D):
+    def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
+                 fully_diff_spectral=True,  stateful=False, **kwargs):
+        super(SNConditionalDepthwiseConv2D, self).__init__(**kwargs)
+        self.sigma_initializer = keras.initializers.get(sigma_initializer)
+        self.fully_diff_spectral = fully_diff_spectral
+        self.spectral_iterations = spectral_iterations
+        self.stateful = stateful
+
+
+    def build(self, input_shape):
+        super(SNConditionalDepthwiseConv2D, self).build(input_shape)
+        kernel_shape = K.int_shape(self.kernel)
+        self.u = self.add_weight(
+            shape=(kernel_shape[0] * kernel_shape[1] * kernel_shape[2], ),
+            name='largest_singular_value',
+            initializer=self.sigma_initializer,
+            trainable=False)
+
+    def call(self, inputs):
+        kernel_shape = K.int_shape(self.kernel)
+        w = K.reshape(self.kernel, (-1, kernel_shape[-1]))
+
+        sigma, u_bar = max_singular_val(w, self.u,
+                                        fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
+
+        self.add_update(K.update(self.u, u_bar))
+
+        kernel = self.kernel
+        self.kernel = self.kernel / sigma
+        outputs = super(SNConditionalDepthwiseConv2D, self).call(inputs)
+        self.kernel = kernel
+
+        return outputs
+
+
 class SNCondtionalDense(ConditionalDense):
     def __init__(self, sigma_initializer=RandomNormal(0, 1), spectral_iterations=1,
                  fully_diff_spectral=True,  stateful=False, renormalize=False, **kwargs):
         """
-        renormalize - if True multiply sigma by sqrt(number_of_classes). To approximatly match the paper Spectral Normalization.
+        renormalize - if True compute only one sigma for kernel, otherwise compute sigma per class
         """
         super(SNCondtionalDense, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
@@ -236,20 +283,32 @@ class SNCondtionalDense(ConditionalDense):
     def build(self, input_shape):
         super(SNCondtionalDense, self).build(input_shape)
         kernel_shape = K.int_shape(self.kernel)
-        self.u = self.add_weight(
-            shape=(self.number_of_classes, kernel_shape[1]),
-            name='largest_singular_value',
-            initializer=self.sigma_initializer,
-            trainable=False)
+        if not self.renormalize:
+            self.u = self.add_weight(
+                shape=(self.number_of_classes, kernel_shape[1]),
+                name='largest_singular_value',
+                initializer=self.sigma_initializer,
+                trainable=False)
+        else:
+            self.u = self.add_weight(
+                shape=(self.number_of_classes * kernel_shape[1], ),
+                name='largest_singular_value',
+                initializer=self.sigma_initializer,
+                trainable=False)
 
 
     def call(self, inputs):
         w = self.kernel
-        sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
-                                        fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
-        sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
+        kernel_shape = K.int_shape(self.kernel)
         if self.renormalize:
-             sigma = sigma * np.sqrt(self.number_of_classes)
+            w = K.reshape(w, [-1, kernel_shape[-1]])
+            sigma, u_bar = max_singular_val(w, self.u,
+                                            fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
+        else:
+            sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
+                                            fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
+            sigma = K.reshape(sigma, (self.number_of_classes, 1, 1))
+
         self.add_update(K.update(self.u, u_bar))
 
         kernel = self.kernel
@@ -459,6 +518,36 @@ def test_conditional_conv():
         assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
 
 
+def test_conditional_conv_with_renorm():
+    from keras.models import Model, Input
+    import numpy as np
+    from numpy.linalg import svd
+    def kernel_init(shape):
+        return np.random.normal(size=shape)
+
+    inp = Input((2, 3, 4))
+    cls = Input((1, ), dtype='int32')
+    out = SNConditionalConv11(number_of_classes=3, filters=10, kernel_initializer=kernel_init, stateful=True, renormalize=True)([inp, cls])
+    m = Model([inp, cls], [out])
+    x = np.arange(5 * 2 * 3 * 4).reshape((5, 2, 3, 4))
+    cls_val = (np.arange(5) % 3)[:,np.newaxis]
+
+    for i in range(100):
+        m.predict([x, cls_val])
+
+    kernel = K.get_value(m.layers[2].kernel)
+    u_val = K.get_value(m.layers[2].u)
+
+    kernel = kernel.reshape((-1, kernel.shape[-1]))
+    _, s, _ = svd(kernel)
+
+    w = K.placeholder(kernel.shape)
+    u = K.placeholder(u_val.shape)
+    max_sg_fun = K.function([w, u], [max_singular_val(w, u)[0]])
+
+    assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
+
+
 def test_conditional_dense():
     from keras.models import Model, Input
     import numpy as np
@@ -500,30 +589,71 @@ def test_conditional_dense_with_renorm():
     def kernel_init(shape):
         np.random.seed(0)
         return np.random.normal(size=shape)
-    number_of_classes = 10
+
     inp = Input((4, ))
     cls = Input((1, ), dtype='int32')
-    out = SNCondtionalDense(number_of_classes=number_of_classes, units=10, kernel_initializer=kernel_init, stateful=True, renormalize=True)([inp, cls])
+    out = SNCondtionalDense(number_of_classes=3, units=10, kernel_initializer=kernel_init, stateful=True, renormalize=True)([inp, cls])
     m = Model([inp, cls], [out])
-    x = np.identity(4)
-    cls_val = (np.zeros(shape=(4, )))[:,np.newaxis]
+    x = np.arange(5 * 4).reshape((5, 4))
+    cls_val = (np.arange(5) % 3)[:,np.newaxis]
 
     for i in range(100):
         m.predict([x, cls_val])
 
-    kernel_normed = m.predict([x, cls_val])
+    kernel = K.get_value(m.layers[2].kernel)
+    u_val = K.get_value(m.layers[2].u)
 
-    assert (svd(kernel_normed)[1][0] - 1 / np.sqrt(number_of_classes)) < 1e-5
+    kernel = kernel.reshape((-1, kernel.shape[-1]))
+    _, s, _ = svd(kernel)
 
+    w = K.placeholder(kernel.shape)
+    u = K.placeholder(u_val.shape)
+    max_sg_fun = K.function([w, u], [max_singular_val(w, u)[0]])
+
+    assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
+
+
+def test_depthwise():
+    from keras.models import Model, Input
+    import numpy as np
+    from numpy.linalg import svd
+    def kernel_init(shape):
+        return np.random.normal(size=shape)
+
+    inp = Input((2, 3, 4))
+    cls = Input((1, ), dtype='int32')
+    out = SNConditionalDepthwiseConv2D(number_of_classes=3, kernel_size=(3, 3), padding='same',
+                                       filters=4, kernel_initializer=kernel_init, stateful=True)([inp, cls])
+    m = Model([inp, cls], [out])
+    x = np.arange(5 * 2 * 3 * 4).reshape((5, 2, 3, 4))
+    cls_val = np.zeros(shape=(5, 1))
+    for i in range(100):
+        m.predict([x, cls_val])
+
+    kernel = K.get_value(m.layers[2].kernel)
+    u_val = K.get_value(m.layers[2].u)
+
+    kernel = kernel.reshape((-1, kernel.shape[3]))
+
+    _, s, _ = svd(kernel)
+
+    w = K.placeholder(kernel.shape)
+    u = K.placeholder(u_val.shape)
+    max_sg_fun = K.function([w, u], [max_singular_val(w, u)[0]])
+
+    assert np.abs(max_sg_fun([kernel, u_val]) - s[0])[0] < 1e-5
 
 if __name__ == "__main__":
-    test_emb()
+    # test_emb()
+    # test_conditional_dense_with_renorm()
+    # test_conv_with_conv_spectal()
+    # test_conditional_dense()
+    # test_conditional_conv()
+    # test_conv2D()
+    # test_dense()
+    # test_singular_val_for_convolution()
+    # test_conv_with_conv_spectal()
+    # test_iterations()
+    test_depthwise()
     test_conditional_dense_with_renorm()
-    test_conv_with_conv_spectal()
-    test_conditional_dense()
-    test_conditional_conv()
-    test_conv2D()
-    test_dense()
-    test_singular_val_for_convolution()
-    test_conv_with_conv_spectal()
-    test_iterations()
+    test_conditional_conv_with_renorm()

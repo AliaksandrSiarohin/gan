@@ -1,5 +1,6 @@
 from keras.engine import Layer, InputSpec
 from keras import initializers, regularizers, constraints
+from keras.backend.tensorflow_backend import _preprocess_padding
 from keras import backend as K
 from keras.backend import tf as ktf
 from keras.utils import conv_utils
@@ -8,6 +9,7 @@ from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, A
 
 from layer_utils import he_init, glorot_init
 from keras.optimizers import Adam
+
 
 class ConditionalAdamOptimizer(Adam):
     def __init__(self, number_of_classes, **kwargs):
@@ -271,7 +273,8 @@ class ConditinalBatchNormalization(Layer):
         if self.scale:
             self.gamma = self.add_weight(shape=shape,
                                          name='gamma',
-                                         initializer=self.gamma_initializer,                                         regularizer=self.gamma_regularizer,
+                                         initializer=self.gamma_initializer,
+                                         regularizer=self.gamma_regularizer,
                                          constraint=self.gamma_constraint,
                                          trainable=True)
         else:
@@ -409,8 +412,8 @@ class ConditionalConv11(Layer):
         if self.data_format != 'channels_first':
             x = ktf.transpose(x,  [0, 3, 1, 2])
             _, in_c, w, h = K.int_shape(x)
-	else:
-	   _, w, h, in_c = K.int_shape(x)
+        else:
+            _, w, h, in_c = K.int_shape(x)
         #(bs, c, w, h)
         x = ktf.reshape(x, (-1, in_c, w * h))
         #(bs, c, w*h)
@@ -649,6 +652,171 @@ class ConditionalConv2D(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
+class ConditionalDepthwiseConv2D(Layer):
+    def __init__(self, filters,
+             kernel_size,
+             number_of_classes,
+             strides=1,
+             padding='valid',
+             data_format=None,
+             dilation_rate=1,
+             activation=None,
+             use_bias=True,
+             kernel_initializer='glorot_uniform',
+             bias_initializer='zeros',
+             kernel_regularizer=None,
+             bias_regularizer=None,
+             activity_regularizer=None,
+             kernel_constraint=None,
+             bias_constraint=None,
+             **kwargs):
+        super(ConditionalDepthwiseConv2D, self).__init__(**kwargs)
+        self.filters = filters
+        self.kernel_size = conv_utils.normalize_tuple(kernel_size, 2, 'kernel_size')
+        self.number_of_classes = number_of_classes
+        self.strides = conv_utils.normalize_tuple(strides, 2, 'strides')
+        self.padding = conv_utils.normalize_padding(padding)
+        self.data_format = conv_utils.normalize_data_format(data_format)
+        self.dilation_rate = conv_utils.normalize_tuple(dilation_rate, 2, 'dilation_rate')
+        self.activation = activations.get(activation)
+        self.use_bias = use_bias
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.kernel_constraint = constraints.get(kernel_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
+
+    def build(self, input_shape):
+        input_shape = input_shape[0]
+        if len(input_shape) < 4:
+            raise ValueError('Inputs to `SeparableConv2D` should have rank 4. '
+                             'Received input shape:', str(input_shape))
+        if self.data_format == 'channels_first':
+            channel_axis = 1
+        else:
+            channel_axis = 3
+        assert input_shape[channel_axis] == self.filters
+        if input_shape[channel_axis] is None:
+            raise ValueError('The channel dimension of the inputs to '
+                             '`SeparableConv2D` '
+                             'should be defined. Found `None`.')
+        input_dim = int(input_shape[channel_axis])
+        depthwise_kernel_shape = (self.number_of_classes,
+                                  self.kernel_size[0],
+                                  self.kernel_size[1],
+                                  input_dim)
+
+        self.kernel = self.add_weight(
+            shape=depthwise_kernel_shape,
+            initializer=self.kernel_initializer,
+            name='depthwise_kernel',
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint)
+
+        if self.use_bias:
+            self.bias = self.add_weight(shape=(self.number_of_classes, self.filters),
+                                        initializer=self.bias_initializer,
+                                        name='bias',
+                                        regularizer=self.bias_regularizer,
+                                        constraint=self.bias_constraint)
+        else:
+            self.bias = None
+        # Set input spec.
+        self.built = True
+
+    def call(self, inputs):
+        if self.data_format is None:
+            data_format = self.data_format
+        if self.data_format not in {'channels_first', 'channels_last'}:
+            raise ValueError('Unknown data_format ' + str(data_format))
+
+        strides = (1,) + self.strides + (1,)
+
+        x = inputs[0]
+        cls = K.squeeze(inputs[1], axis=-1)
+
+        #Kernel preprocess
+        kernel = K.gather(self.kernel, cls)
+        #(bs, w, h, c)
+        kernel = ktf.transpose(kernel, [1, 2, 3, 0])
+        #(w, h, c, bs)
+        kernel = K.reshape(kernel, (self.kernel_size[0], self.kernel_size[1], -1))
+        #(w, h, c * bs)
+        kernel = K.expand_dims(kernel, axis=-1)
+        #(w, h, c * bs, 1)
+
+        if self.data_format == 'channles_first':
+            x = ktf.transpose(x, [0, 2, 3, 1])
+        bs, w, h, c = K.int_shape(x)
+        #(bs, w, h, c)
+        x = ktf.transpose(x, [1, 2, 3, 0])
+        #(w, h, c, bs)
+        x = K.reshape(x, (w, h, -1))
+        #(w, h, c * bs)
+        x = K.expand_dims(x, axis=0)
+        #(1, w, h, c * bs)
+
+        padding = _preprocess_padding(self.padding)
+
+        outputs = ktf.nn.depthwise_conv2d(x, kernel,
+                                         strides=strides,
+                                         padding=padding,
+                                         rate=self.dilation_rate)
+        #(1, w, h, c * bs)
+        _, w, h, _ = K.int_shape(outputs)
+        outputs = K.reshape(outputs, [w, h, self.filters, -1])
+        #(w, h, c, bs)
+        outputs = ktf.transpose(outputs, [3, 0, 1, 2])
+        #(bs, w, h, c)
+
+        if self.bias is not None:
+            #(num_cls, out)
+            bias = ktf.gather(self.bias, cls)
+            #(bs, bias)
+            bias = ktf.expand_dims(bias, axis=1)
+            bias = ktf.expand_dims(bias, axis=1)
+            #(bs, bias, 1, 1)
+            outputs += bias
+
+        if self.data_format == 'channles_first':
+            outputs = ktf.transpose(outputs, [0, 3, 1, 2])
+
+        if self.activation is not None:
+            return self.activation(outputs)
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+        input_shape = input_shape[0]
+        if self.data_format == 'channels_first':
+            rows = input_shape[2]
+            cols = input_shape[3]
+        elif self.data_format == 'channels_last':
+            rows = input_shape[1]
+            cols = input_shape[2]
+
+        rows = conv_utils.conv_output_length(rows, self.kernel_size[0],
+                                             self.padding,
+                                             self.strides[0])
+        cols = conv_utils.conv_output_length(cols, self.kernel_size[1],
+                                             self.padding,
+                                             self.strides[1])
+        if self.data_format == 'channels_first':
+            return (input_shape[0], self.filters, rows, cols)
+        elif self.data_format == 'channels_last':
+            return (input_shape[0], rows, cols, self.filters)
+
+    def get_config(self):
+        config = super(ConditionalDepthwiseConv2D, self).get_config()
+        config.pop('kernel_initializer')
+        config.pop('kernel_regularizer')
+        config.pop('kernel_constraint')
+        config['depth_multiplier'] = 1
+        config['depthwise_initializer'] = initializers.serialize(self.depthwise_initializer)
+        config['depthwise_regularizer'] = regularizers.serialize(self.depthwise_regularizer)
+        config['depthwise_constraint'] = constraints.serialize(self.depthwise_constraint)
+        return config
 
 
 class ConditionalDense(Layer):
@@ -812,6 +980,9 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     convpath = Activation('relu')(convpath)
 
     convpath = conditional_plus_unconditional_block(convpath, cond_bottleneck, uncond_bottleneck, 'bottleneck')
+    if cond_bottleneck or uncond_bottleneck:
+        convpath = norm(axis=feature_axis, name=name + '_bn3')(convpath)
+        convpath = Activation('relu')(convpath)
 
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
                           use_bias=True, padding='same', name=name + '_conv2')(convpath)
@@ -944,9 +1115,43 @@ def test_conditional_conv():
     assert np.all(out[1] == 10)
     assert np.all(out[2] == 5)
 
+
+def test_deptwise_conv():
+    from keras.models import Model, Input
+    import numpy as np
+    def kernel_init(shape):
+        a = np.empty(shape)
+        a[0, ..., 0] = 1
+        a[1, ..., 0] = 2
+        a[2, ..., 0] = 3
+
+        a[0, ..., 1] = 2
+        a[1, ..., 1] = 3
+        a[2, ..., 1] = 5
+
+        return a
+
+    inp = Input((2, 2, 2))
+    cls = Input((1, ), dtype='int32')
+    m = Model([inp, cls], ConditionalDepthwiseConv2D(number_of_classes=3, filters=2,
+             kernel_size=(3, 3), padding='same', kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls]))
+    x = np.ones((3, 2, 2, 2))
+    cls = np.expand_dims(np.arange(3), axis=-1)
+    cls[2] = 0
+    out = m.predict([x, cls])
+
+    assert np.all(out[0, ..., 0] == 5)
+    assert np.all(out[1, ..., 0] == 10)
+    assert np.all(out[2, ..., 0] == 5)
+
+    assert np.all(out[0, ..., 1] == 10)
+    assert np.all(out[1, ..., 1] == 15)
+    assert np.all(out[2, ..., 1] == 10)
+
+
 if __name__ == "__main__":
     #test_conditional_conv()
     #test_conditional_instance()
     #test_conditional_conv11()
     #test_conditional_dense()
-    test_conditional_bn()
+    test_deptwise_conv()
