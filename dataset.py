@@ -103,7 +103,7 @@ class LabeledArrayDataset(ArrayDataset):
 
         self._Y = y
         self._Y_test = y_test
-        self._X_test = _X_test
+        self._X_test = X_test
         if y is not None:
             if len(y.shape) == 1:
                 self._Y = np.expand_dims(y, axis=1)
