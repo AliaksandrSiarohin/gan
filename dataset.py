@@ -94,17 +94,24 @@ class FolderDataset(UGANDataset):
 
 
 class LabeledArrayDataset(ArrayDataset):
-    def __init__(self, X, batch_size, y=None, noise_size=(128, )):
+    def __init__(self, X, X_test, batch_size, y=None, y_test=None, noise_size=(128, )):
         X = (X.astype(np.float32) - 127.5) / 127.5
+        X_test = (X_test.astype(np.float32) - 127.5) / 127.5
         #dequantize
         X += np.random.uniform(0, 1/128.0, size=X.shape)
         super(LabeledArrayDataset, self).__init__(X, batch_size, noise_size)
 
         self._Y = y
+        self._Y_test = y_test
+        self._X_test = _X_test
         if y is not None:
             if len(y.shape) == 1:
                 self._Y = np.expand_dims(y, axis=1)
             self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
+
+        if y_test is not None:
+            if len(y.shape) == 1:
+                self._Y_test = np.expand_dims(y_test, axis=1)
 
     def number_of_batches_per_epoch(self):
         return 1000

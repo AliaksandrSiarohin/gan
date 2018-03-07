@@ -1023,6 +1023,7 @@ def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
 
 def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, name,
                   norm=BatchNormalization, is_first=False, conv_layer=Conv2D,
+                  cls_conv=None,
                   cond_conv_layer=ConditionalConv11,
                   cond_bottleneck=False, uncond_bottleneck=False,
                   uncond_shortcut=True, cond_shortcut=False):
@@ -1095,6 +1096,28 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
 
     if resample == "DOWN":
         convpath = resample_op(convpath)
+
+
+    if cls_conv is not None:
+        cls_convpath = x
+        if not is_first:
+            cls_convpath = norm(axis=feature_axis, name=name + '_cls' + '_bn1')(convpath)
+            cls_convpath = Activation('relu')(convpath)
+        if resample == "UP":
+            cls_convpath = resample_op(convpath)
+
+        cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
+                                use_bias=True, padding='same', name=name + '_cls' + '_conv1')(convpath)
+
+        cls_convpath = norm(axis=feature_axis, name=name  + '_cls' + '_bn2')(convpath)
+        cls_convpath = Activation('relu')(convpath)
+
+        cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
+                                use_bias=True, padding='same', name=name  + '_cls' + '_conv2')(convpath)
+
+        if resample == "DOWN":
+            cls_convpath = resample_op(convpath)
+        convpath = Add()([convpath, cls_convpath])
 
     y = Add()([shortcut, convpath])
 
