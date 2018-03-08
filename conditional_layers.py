@@ -1101,22 +1101,22 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     if cls_conv is not None:
         cls_convpath = x
         if not is_first:
-            cls_convpath = norm(axis=feature_axis, name=name + '_cls' + '_bn1')(convpath)
-            cls_convpath = Activation('relu')(convpath)
+            cls_convpath = norm(axis=feature_axis, name=name + '_cls' + '_bn1')(cls_convpath)
+            cls_convpath = Activation('relu')(cls_convpath)
         if resample == "UP":
-            cls_convpath = resample_op(convpath)
+            cls_convpath = resample_op(cls_convpath)
 
         cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                use_bias=True, padding='same', name=name + '_cls' + '_conv1')(convpath)
+                                use_bias=True, padding='same', name=name + '_cls' + '_conv1')(cls_convpath)
 
-        cls_convpath = norm(axis=feature_axis, name=name  + '_cls' + '_bn2')(convpath)
-        cls_convpath = Activation('relu')(convpath)
+        cls_convpath = norm(axis=feature_axis, name=name  + '_cls' + '_bn2')(cls_convpath)
+        cls_convpath = Activation('relu')(cls_convpath)
 
         cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                use_bias=True, padding='same', name=name  + '_cls' + '_conv2')(convpath)
+                                use_bias=True, padding='same', name=name  + '_cls' + '_conv2')(cls_convpath)
 
         if resample == "DOWN":
-            cls_convpath = resample_op(convpath)
+            cls_convpath = resample_op(cls_convpath)
         convpath = Add()([convpath, cls_convpath])
 
     y = Add()([shortcut, convpath])
