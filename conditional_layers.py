@@ -9,6 +9,7 @@ from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, A
 from keras.legacy import interfaces
 from layer_utils import he_init, glorot_init
 from keras.optimizers import Adam
+from keras.initializers import Identity
 
 
 class ConditionalAdamOptimizer(Adam):
@@ -389,6 +390,95 @@ class ConditinalBatchNormalization(Layer):
             'gamma_constraint': constraints.serialize(self.gamma_constraint)
         }
         base_config = super(ConditinalBatchNormalization, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class DecorelationNormalization(Layer):
+    def __init__(self,
+                  momentum=0.99,
+                  epsilon=1e-8,
+                  moving_mean_initializer='zeros',
+                  moving_cov_initializer=Identity(),
+                  **kwargs):
+        super(DecorelationNormalization, self).__init__(**kwargs)
+        self.supports_masking = True
+        self.momentum = momentum
+        self.epsilon = epsilon
+        self.moving_mean_initializer = initializers.get(moving_mean_initializer)
+        self.moving_cov_initializer = initializers.get(moving_cov_initializer)
+        self.axis = -1
+
+    def build(self, input_shape):
+        dim = input_shape[self.axis]
+        if dim is None:
+            raise ValueError('Axis ' + str(self.axis) + ' of '
+                             'input tensor should have a defined dimension '
+                             'but the layer received an input with shape ' +
+                             str(input_shape) + '.')
+        shape = (dim, )
+        self.moving_mean = self.add_weight(
+            (dim, 1),
+            name='moving_mean',
+            initializer=self.moving_mean_initializer,
+            trainable=False)
+        self.moving_cov = self.add_weight(
+            (dim, dim),
+            name='moving_variance',
+            initializer=self.moving_cov_initializer,
+            trainable=False)
+        self.built = True
+
+    def call(self, inputs, training=None):
+        #input_shape = K.int_shape(inputs)
+
+        _, w, h, c = K.int_shape(inputs)
+        bs = K.shape(inputs)[0]
+
+        x_t = ktf.transpose(inputs, (3, 0, 1, 2))
+
+        # BxCxHxW -> CxB*H*W
+        x_flat = ktf.reshape(x_t, (c, -1))
+
+        # Covariance
+        m = ktf.reduce_mean(x_flat, axis=1, keep_dims=True)
+        m = K.in_train_phase(m, self.moving_mean)
+        f = x_flat - m
+        ff = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.) + ktf.eye(c)*self.epsilon
+
+        # tf.svd is slower on GPU, see https://github.com/tensorflow/tensorflow/issues/13603
+        with ktf.device('/cpu:0'):
+            S, U, _ = ktf.svd(ff, full_matrices=True)
+        S = K.stop_gradient(S)
+        U = K.stop_gradient(U)
+        # Filter small singular values
+        k = ktf.reduce_sum(ktf.cast(ktf.greater(S, 1e-5), ktf.int32))
+
+        # Whiten content feature
+        D = ktf.diag(ktf.pow(S[:k], -0.5))
+        inv_sqrt = ktf.matmul(ktf.matmul(U[:,:k], D), U[:,:k], transpose_b=True)
+        inv_sqrt = K.in_train_phase(inv_sqrt, self.moving_cov)
+        f_hat = ktf.matmul(inv_sqrt, f)
+
+        decorelated = K.reshape(f_hat, K.shape(inputs))
+
+        self.add_update([K.moving_average_update(self.moving_mean,
+                                                     m,
+                                                     self.momentum),
+                         K.moving_average_update(self.moving_cov,
+                                                     inv_sqrt,
+                                                     self.momentum)],
+                         inputs)
+        return decorelated
+
+    def get_config(self):
+        config = {
+            'axis': self.axis,
+            'momentum': self.momentum,
+            'epsilon': self.epsilon,
+            'moving_mean_initializer': initializers.serialize(self.moving_mean_initializer),
+            'moving_variance_initializer': initializers.serialize(self.moving_cov_initializer)
+        }
+        base_config = super(DecorelationNormalization, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
@@ -1278,6 +1368,29 @@ def test_deptwise_conv():
     assert np.all(out[1, ..., 1] == 15)
     assert np.all(out[2, ..., 1] == 10)
 
+def test_decorelation():
+    from keras.models import Model, Input
+    import numpy as np
+    def beta_init(shape):
+        a = np.empty(shape)
+        a[0] = 1
+        a[1] = 2
+        a[2] = 3
+        return a
+    K.set_learning_phase(1)
+    inp = Input((10, 10, 2))
+    out = DecorelationNormalization()(inp)
+    m = Model([inp], out)
+    x = np.random.multivariate_normal(mean=[5, 6], cov=[[1, 0.5], [0.5, 1]], size=(10, 10, 10))
+
+    #x[1] = x[1] * 2
+    #x[2] = x[2] * 3
+
+    out = m.predict(x)
+    out = np.reshape(out, [-1, out.shape[-1]])
+    x = np.reshape(x, [-1, x.shape[-1]])
+    print (np.cov(x, rowvar=False))
+    print (np.cov(out, rowvar=False))
 
 if __name__ == "__main__":
     #test_conditional_conv()
@@ -1285,4 +1398,5 @@ if __name__ == "__main__":
     #test_conditional_conv11()
     #test_conditional_dense()
     #test_deptwise_conv()
-    test_conditional_bn()
+    #test_conditional_bn()
+    test_decorelation()

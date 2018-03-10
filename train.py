@@ -18,12 +18,15 @@ class Trainer(object):
                  checkpoints_dir='output/checkpoints', training_ratio=5,
                  display_ratio=1, checkpoint_ratio=10, start_epoch=0,
                  number_of_epochs=100, batch_size=64, generator_batch_multiple=2,
-                 at_store_checkpoint_hook = None, save_weights_only=True, **kwargs):
+                 at_store_checkpoint_hook = None, save_weights_only=True,
+                 concatenate_generator_batches=True, **kwargs):
         self.dataset = dataset
         self.current_epoch = start_epoch
         self.last_epoch = start_epoch + number_of_epochs
         self.gan = gan
         self.gen_batch_mul = generator_batch_multiple
+        self.concatenate_generator_batches = concatenate_generator_batches
+
         self.at_store_checkpoint_hook = at_store_checkpoint_hook
         self.save_weights_only = save_weights_only
 
@@ -41,6 +44,7 @@ class Trainer(object):
         self.training_ratio = training_ratio
         self.display_ratio = display_ratio
         self.checkpoint_ratio = checkpoint_ratio
+
 
 
     def save_generated_images(self):
@@ -76,15 +80,21 @@ class Trainer(object):
             loss = self.discriminator_train_op(discrimiantor_batch + generator_batch + [True])
             discriminator_loss_list.append(loss)
 
-        if self.gen_batch_mul != 1:
-            generator_batch = []
-            for i in range(self.gen_batch_mul):
-                generator_batch.append(self.dataset.next_generator_sample())
-            generator_batch = [np.concatenate(l, axis=0) for l in zip(*generator_batch)]
+        if self.concatenate_generator_batches:
+            if self.gen_batch_mul != 1:
+                generator_batch = []
+                for i in range(self.gen_batch_mul):
+                    generator_batch.append(self.dataset.next_generator_sample())
+                generator_batch = [np.concatenate(l, axis=0) for l in zip(*generator_batch)]
+            else:
+                generator_batch = self.dataset.next_generator_sample()
+            loss = self.generator_train_op(generator_batch + [True])
+            generator_loss_list.append(loss)
         else:
-            generator_batch = self.dataset.next_generator_sample()
-        loss = self.generator_train_op(generator_batch + [True])
-        generator_loss_list.append(loss)
+            for j in range(self.gen_batch_mul):
+                generator_batch = self.dataset.next_generator_sample()
+                loss = self.generator_train_op(generator_batch + [True])
+                generator_loss_list.append(loss)
 
 
     def train_one_epoch(self, validation_epoch=False):
