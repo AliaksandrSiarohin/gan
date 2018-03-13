@@ -393,6 +393,112 @@ class ConditinalBatchNormalization(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
+class ConditionalCenterScale(Layer):
+    def __init__(self,
+                 number_of_classes,
+                 axis = -1,
+                 center=True,
+                 scale=True,
+                 beta_initializer='zeros',
+                 gamma_initializer='ones',
+                 beta_regularizer=None,
+                 gamma_regularizer=None,
+                 beta_constraint=None,
+                 gamma_constraint=None,
+                 **kwargs):
+        super(ConditionalCenterScale, self).__init__(**kwargs)
+        self.number_of_classes = number_of_classes
+        self.supports_masking = True
+        self.axis = axis
+        self.center = center
+        self.scale = scale
+        self.beta_initializer = initializers.get(beta_initializer)
+        self.gamma_initializer = initializers.get(gamma_initializer)
+        self.beta_regularizer = regularizers.get(beta_regularizer)
+        self.gamma_regularizer = regularizers.get(gamma_regularizer)
+        self.beta_constraint = constraints.get(beta_constraint)
+        self.gamma_constraint = constraints.get(gamma_constraint)
+
+    def build(self, input_shape):
+        ndim = len(input_shape[0])
+        cls = input_shape[1]
+        if len(cls) != 2:
+            raise ValueError("Classes should be one dimensional")
+
+        if self.axis == 0:
+            raise ValueError('Axis cannot be zero')
+
+        if (self.axis is not None) and (ndim == 2):
+            raise ValueError('Cannot specify axis for rank 1 tensor')
+
+        if self.axis is None:
+            shape = (self.number_of_classes, 1)
+        else:
+            shape = (self.number_of_classes, input_shape[0][self.axis])
+
+        if self.scale:
+            self.gamma = self.add_weight(shape=shape,
+                                         name='gamma',
+                                         initializer=self.gamma_initializer,
+                                         regularizer=self.gamma_regularizer,
+                                         constraint=self.gamma_constraint)
+        else:
+            self.gamma = None
+        if self.center:
+            self.beta = self.add_weight(shape=shape,
+                                        name='beta',
+                                        initializer=self.beta_initializer,
+                                        regularizer=self.beta_regularizer,
+                                        constraint=self.beta_constraint)
+        else:
+            self.beta = None
+        super(ConditionalCenterScale, self).build(input_shape)
+
+    def call(self, inputs, training=None):
+        class_labels = K.squeeze(inputs[1], axis=1)
+        inputs = inputs[0]
+        input_shape = K.int_shape(inputs)
+        reduction_axes = list(range(0, len(input_shape)))
+
+        if (self.axis is not None):
+            del reduction_axes[self.axis]
+
+        del reduction_axes[0]
+
+        normed = inputs
+
+        broadcast_shape = [1] * len(input_shape)
+        broadcast_shape[0] = K.shape(inputs)[0]
+        if self.axis is not None:
+            broadcast_shape[self.axis] = input_shape[self.axis]
+
+        if self.scale:
+            broadcast_gamma = K.reshape(K.gather(self.gamma, class_labels), broadcast_shape)
+            normed = normed * broadcast_gamma
+        if self.center:
+            broadcast_beta = K.reshape(K.gather(self.beta, class_labels), broadcast_shape)
+            normed = normed + broadcast_beta
+        return normed
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0]
+
+    def get_config(self):
+        config = {
+            'number_of_classes': self.number_of_classes,
+            'axis': self.axis,
+            'center': self.center,
+            'scale': self.scale,
+            'beta_initializer': initializers.serialize(self.beta_initializer),
+            'gamma_initializer': initializers.serialize(self.gamma_initializer),
+            'beta_regularizer': regularizers.serialize(self.beta_regularizer),
+            'gamma_regularizer': regularizers.serialize(self.gamma_regularizer),
+            'beta_constraint': constraints.serialize(self.beta_constraint),
+            'gamma_constraint': constraints.serialize(self.gamma_constraint)
+        }
+        base_config = super(ConditionalCenterScale, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 class DecorelationNormalization(Layer):
     def __init__(self,
                   momentum=0.99,
@@ -443,20 +549,34 @@ class DecorelationNormalization(Layer):
         m = ktf.reduce_mean(x_flat, axis=1, keep_dims=True)
         m = K.in_train_phase(m, self.moving_mean)
         f = x_flat - m
-        ff = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.) + ktf.eye(c)*self.epsilon
+        ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
+        ff_mov = self.moving_cov
 
-        # tf.svd is slower on GPU, see https://github.com/tensorflow/tensorflow/issues/13603
         with ktf.device('/cpu:0'):
-            S, U, _ = ktf.svd(ff, full_matrices=True)
-        S = K.stop_gradient(S)
-        U = K.stop_gradient(U)
+            S_diff, U_diff, _ = ktf.svd(ff_apr + ktf.eye(c)*self.epsilon, full_matrices=True)
+
+        with ktf.device('/cpu:0'):
+            S_mov, U_mov, _ = ktf.svd(ff_mov + ktf.eye(c)*self.epsilon, full_matrices=True)
+
+        S = K.stop_gradient(S_diff)
+        U = K.stop_gradient(U_diff)
+
         # Filter small singular values
         k = ktf.reduce_sum(ktf.cast(ktf.greater(S, 1e-5), ktf.int32))
+        D = ktf.diag(ktf.pow(S[:k], 0.5))
+        sqrt = ktf.matmul(ktf.matmul(U[:,:k], D), U[:,:k], transpose_b=True)
 
-        # Whiten content feature
-        D = ktf.diag(ktf.pow(S[:k], -0.5))
-        inv_sqrt = ktf.matmul(ktf.matmul(U[:,:k], D), U[:,:k], transpose_b=True)
-        inv_sqrt = K.in_train_phase(inv_sqrt, self.moving_cov)
+        k = ktf.reduce_sum(ktf.cast(ktf.greater(S_mov, 1e-5), ktf.int32))
+        D = ktf.diag(ktf.pow(S_mov[:k], -0.5))
+        inv_sqrt_mov = ktf.matmul(ktf.matmul(U_mov[:,:k], D), U_mov[:,:k], transpose_b=True)
+
+        k = ktf.reduce_sum(ktf.cast(ktf.greater(S_diff, 1e-5), ktf.int32))
+        D = ktf.diag(ktf.pow(S_diff[:k], -0.5))
+        inv_sqrt_diff = ktf.matmul(ktf.matmul(U_diff[:,:k], D), U_diff[:,:k], transpose_b=True)
+
+        inv_sqrt_diff = ktf.matmul(ktf.matmul(sqrt, inv_sqrt_mov), inv_sqrt_diff)
+
+        inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
         f_hat = ktf.matmul(inv_sqrt, f)
 
         decorelated = K.reshape(f_hat, K.shape(inputs))
@@ -465,7 +585,7 @@ class DecorelationNormalization(Layer):
                                                      m,
                                                      self.momentum),
                          K.moving_average_update(self.moving_cov,
-                                                     inv_sqrt,
+                                                     ff_apr,
                                                      self.momentum)],
                          inputs)
         return decorelated
@@ -1281,6 +1401,28 @@ def test_conditional_instance():
     assert np.all(out[2] == 3)
 
 
+def test_conditional_center_scale():
+    from keras.models import Model, Input
+    import numpy as np
+    def beta_init(shape):
+        a = np.empty(shape)
+        a[0] = 1
+        a[1] = 2
+        a[2] = 3
+        return a
+    inp = Input((2, 2, 1))
+    cls = Input((1, ), dtype='int32')
+    m = Model([inp, cls], ConditionalCenterScale(3, axis=-1, gamma_initializer=beta_init,
+                                                            beta_initializer=beta_init)([inp, cls]))
+    x = np.ones((3, 2, 2, 1))
+    cls = np.expand_dims(np.arange(3), axis=-1)
+    out = m.predict([x, cls])
+
+    assert np.all(out[0] == 2)
+    assert np.all(out[1] == 4)
+    assert np.all(out[2] == 6)
+
+
 def test_conditional_bn():
     from keras.models import Model, Input
     import numpy as np
@@ -1377,7 +1519,7 @@ def test_decorelation():
         a[1] = 2
         a[2] = 3
         return a
-    K.set_learning_phase(1)
+    #K.set_learning_phase(0)
     inp = Input((10, 10, 2))
     out = DecorelationNormalization()(inp)
     m = Model([inp], out)
@@ -1399,4 +1541,5 @@ if __name__ == "__main__":
     #test_conditional_dense()
     #test_deptwise_conv()
     #test_conditional_bn()
-    test_decorelation()
+    #test_decorelation()
+    test_conditional_center_scale()
