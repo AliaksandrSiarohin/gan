@@ -594,11 +594,13 @@ class CenterScale(Layer):
         base_config = super(CenterScale, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
+
 class DecorelationNormalization(Layer):
     def __init__(self,
                   momentum=0.99,
                   epsilon=1e-3,
                   moving_mean_initializer='zeros',
+                  renorm=False,
                   moving_cov_initializer=Identity(),
                   **kwargs):
         super(DecorelationNormalization, self).__init__(**kwargs)
@@ -608,6 +610,7 @@ class DecorelationNormalization(Layer):
         self.moving_mean_initializer = initializers.get(moving_mean_initializer)
         self.moving_cov_initializer = initializers.get(moving_cov_initializer)
         self.axis = -1
+        self.renorm = renorm
 
     def build(self, input_shape):
         dim = input_shape[self.axis]
@@ -644,35 +647,25 @@ class DecorelationNormalization(Layer):
         m = ktf.reduce_mean(x_flat, axis=1, keep_dims=True)
         m = K.in_train_phase(m, self.moving_mean)
         f = x_flat - m
-        ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32))# - 1.)
-        ff_apr = ktf.diag(ktf.diag_part(ff_apr))
+        ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
         ff_mov = self.moving_cov
 
-        with ktf.device('/cpu:0'):
-            S_diff, U_diff, _ = ktf.svd(ff_apr + ktf.eye(c)*self.epsilon, full_matrices=True)
+        inv = ktf.matrix_inverse(ff_apr + ktf.eye(c)*self.epsilon)
+        l = ktf.cholesky(inv)
+        inv_sqrt_diff = K.transpose(l)
 
-        with ktf.device('/cpu:0'):
-            S_mov, U_mov, _ = ktf.svd(ff_mov + ktf.eye(c)*self.epsilon, full_matrices=True)
+        inv = ktf.matrix_inverse(ff_mov + ktf.eye(c)*self.epsilon)
+        l = ktf.cholesky(inv)
+        inv_sqrt_mov = K.transpose(l)
+ 
+        l = ktf.cholesky(ff_apr)
+        sqrt = K.transpose(l)
+        sqrt = K.stop_gradient(sqrt)
+        
+        if self.renorm:
+            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, sqrt), inv_sqrt_diff)        
 
-        #U_diff = K.stop_gradient(U_diff)
-        #S_diff = K.stop_gradient(S_diff)
-
-        #S = K.stop_gradient(S_diff)
-        #U = K.stop_gradient(U_diff)
-
-        #D = ktf.diag(ktf.pow(S, 0.5))
-        #sqrt = ktf.matmul(ktf.matmul(U, D), U, transpose_b=True)
-
-        #D = ktf.diag(ktf.pow(S_mov, -0.5))
-        #inv_sqrt_mov = ktf.matmul(ktf.matmul(U_mov, D), U_mov, transpose_b=True)
-
-#        D = ktf.diag(ktf.pow(S_diff, -0.5))
-#        inv_sqrt_diff = ktf.matmul(ktf.matmul(U_diff, D), U_diff, transpose_b=True)
-	inv_sqrt_diff = ktf.diag(S_diff ** (-0.5))
-        #inv_sqrt_diff = ktf.matmul(ktf.matmul(sqrt, inv_sqrt_mov), inv_sqrt_diff)
-
-        #inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
-        inv_sqrt = inv_sqrt_diff
+        inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
         f_hat = ktf.matmul(inv_sqrt, f)
 
         decorelated = K.reshape(f_hat, [c, bs, w, h])
@@ -1670,6 +1663,6 @@ if __name__ == "__main__":
     #test_conditional_dense()
     #test_deptwise_conv()
     #test_conditional_bn()
-    #test_decorelation()
+    test_decorelation()
     #test_conditional_center_scale()
-    test_center_scale()
+    #test_center_scale()
