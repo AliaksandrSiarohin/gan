@@ -652,18 +652,16 @@ class DecorelationNormalization(Layer):
 
         inv = ktf.matrix_inverse(ff_apr + ktf.eye(c)*self.epsilon)
         l = ktf.cholesky(inv)
+        inv_l = ktf.matrix_inverse(K.transpose(l))
         inv_sqrt_diff = K.transpose(l)
 
         inv = ktf.matrix_inverse(ff_mov + ktf.eye(c)*self.epsilon)
         l = ktf.cholesky(inv)
         inv_sqrt_mov = K.transpose(l)
- 
-        l = ktf.cholesky(ff_apr)
-        sqrt = K.transpose(l)
-        sqrt = K.stop_gradient(sqrt)
-        
+
+        inv_l = K.stop_gradient(inv_l)
         if self.renorm:
-            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, sqrt), inv_sqrt_diff)        
+            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, inv_l), inv_sqrt_diff)
 
         inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
         f_hat = ktf.matmul(inv_sqrt, f)
@@ -1634,19 +1632,24 @@ def test_decorelation():
     inp = Input((10, 10, 64))
     bn = BatchNormalization(center=False, scale=False)(inp)
     out1 =  bn#Lambda(lambda x: K.gradients(K.sum(bn ** 2), inp))(bn)
-    decor = DecorelationNormalization()(inp)
+    decor_l = DecorelationNormalization(renorm=True)
+    decor = decor_l(inp)
+    decor_l.stateful = True
     out = decor# Lambda(lambda x: K.gradients(K.sum(decor ** 2), inp))(decor)
 
     m = Model([inp], [out, out1])
-    cov = np.eye(64)
-    cov[0, 1] = 32
-    cov[1, 0] = 32
-    x = np.random.multivariate_normal(mean=np.ones(64), cov=cov, size=(10, 10, 10))
+    for i in range(1000):
+        cov = np.eye(64)
+        cov[0, 1] = 32
+        cov[1, 0] = 32
+        x = np.random.multivariate_normal(mean=np.ones(64), cov=cov, size=(10, 10, 10))
+        out, out1 = m.predict(x)
+    print K.get_value(decor_l.moving_cov)
 
     #x[1] = x[1] * 2
     #x[2] = x[2] * 3
 
-    out, out1 = m.predict(x)
+
     print np.mean(out1 ** 2)
     print np.mean(out ** 2)
     #print np.abs(out - out1)
