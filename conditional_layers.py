@@ -648,20 +648,23 @@ class DecorelationNormalization(Layer):
         m = K.in_train_phase(m, self.moving_mean)
         f = x_flat - m
         ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
+        ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
         ff_mov = self.moving_cov
 
-        inv = ktf.matrix_inverse((1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon)
-        l = ktf.cholesky(inv)
-        inv_l = ktf.matrix_inverse(K.transpose(l))
-        inv_sqrt_diff = K.transpose(l)
+        #inv = ktf.matrix_inverse()
+        l = ktf.cholesky(ff_apr_shrinked)
+        inv_sqrt_diff = ktf.matrix_triangular_solve(l, ktf.eye(c))
+        #inv_l = ktf.matrix_inverse(l)
+        #inv_sqrt_diff = inv_l
 
-        inv = ktf.matrix_inverse((1 - self.epsilon) * ff_mov + ktf.eye(c) * self.epsilon)
-        l = ktf.cholesky(inv)
-        inv_sqrt_mov = K.transpose(l)
+        #inv = ktf.matrix_inverse((1 - self.epsilon) * ff_mov + ktf.eye(c) * self.epsilon)
+        l = ktf.cholesky(ff_mov)
+        inv_sqrt_mov = ktf.matrix_triangular_solve(l, ktf.eye(c))
+        #inv_sqrt_mov =  K.transpose(l)
 
-        inv_l = K.stop_gradient(inv_l)
+        l_st = K.stop_gradient(l)
         if self.renorm:
-            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, inv_l), inv_sqrt_diff)
+            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, l_st), inv_sqrt_diff)
 
         inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
         f_hat = ktf.matmul(inv_sqrt, f)
@@ -1639,9 +1642,9 @@ def test_decorelation():
 
     m = Model([inp], [out, out1])
 
-    cov = np.eye(64)
-    cov[0, 1] = 32
-    cov[1, 0] = 32
+    cov = 0.5 * np.eye(64) + 0.5 * np.ones((64, 64))
+    # cov[0, 1] = 32
+    # cov[1, 0] = 32
     x = np.random.multivariate_normal(mean=np.ones(64), cov=cov, size=(10, 10, 10))
     out, out1 = m.predict(x)
     print K.get_value(decor_l.moving_cov)
