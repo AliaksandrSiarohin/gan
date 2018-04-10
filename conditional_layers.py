@@ -649,7 +649,7 @@ class DecorelationNormalization(Layer):
         f = x_flat - m
         ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
         ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
-        ff_mov = self.moving_cov
+        ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
 
         #inv = ktf.matrix_inverse()
         l = ktf.cholesky(ff_apr_shrinked)
@@ -708,6 +708,7 @@ class ConditionalConv11(Layer):
              activity_regularizer=None,
              kernel_constraint=None,
              bias_constraint=None,
+             triangular=False,
              **kwargs):
         super(ConditionalConv11, self).__init__(**kwargs)
         self.filters = filters
@@ -726,6 +727,7 @@ class ConditionalConv11(Layer):
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
         self.bias_constraint = constraints.get(bias_constraint)
+        self.triangular = triangular
 
 
     def build(self, input_shape):
@@ -776,7 +778,11 @@ class ConditionalConv11(Layer):
         ### Preprocess filter
         cls = ktf.squeeze(cls, axis=1)
         #(num_cls, 1, 1, in, out)
-        kernel = ktf.gather(self.kernel, cls)
+        if self.triangular:
+            kernel = ktf.matrix_band_part(self.kernel, 0, -1)
+        else:
+            kernel = self.kernel
+        kernel = ktf.gather(kernel, cls)
         #(bs, 1, 1, in, out)
 
         kernel = ktf.squeeze(kernel, axis=1)
@@ -1589,6 +1595,29 @@ def test_conditional_conv():
     assert np.all(out[2] == 5)
 
 
+def test_triangular_conv11():
+    from keras.models import Model, Input
+    import numpy as np
+    def kernel_init(shape):
+        a = np.empty(shape)
+        a[..., 0] = 1
+        a[..., 1] = 2
+        #a[1] = 2
+        #a[2] = 3
+        return a
+
+    inp = Input((2, 2, 2))
+    cls = Input((1, ), dtype='int32')
+    m = Model([inp, cls], ConditionalConv11(number_of_classes=1, filters=2, triangular=True,
+                          kernel_initializer=kernel_init, bias_initializer='zeros')([inp, cls]))
+    x = np.ones((1, 2, 2, 2))
+    cls = np.expand_dims(np.arange(1), axis=-1)
+    cls[:] = 0
+    out = m.predict([x, cls])
+    assert np.all(out[0, ..., 0] == 1)
+    assert np.all(out[0, ..., 1] == 4)
+
+
 def test_deptwise_conv():
     from keras.models import Model, Input
     import numpy as np
@@ -1666,9 +1695,10 @@ if __name__ == "__main__":
     #test_conditional_conv()
     #test_conditional_instance()
     #test_conditional_conv11()
+    test_triangular_conv11()
     #test_conditional_dense()
     #test_deptwise_conv()
     #test_conditional_bn()
-    test_decorelation()
+    #test_decorelation()
     #test_conditional_center_scale()
     #test_center_scale()
