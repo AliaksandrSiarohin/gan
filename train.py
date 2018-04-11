@@ -62,8 +62,7 @@ class Trainer(object):
     def make_checkpoint(self):
         g_title = "epoch_{}_generator.h5".format(str(self.current_epoch).zfill(3))
         d_title = "epoch_{}_discriminator.h5".format(str(self.current_epoch).zfill(3))
-        if self.at_store_checkpoint_hook is not None:
-            self.at_store_checkpoint_hook(self.current_epoch)
+
         if not os.path.exists(self.checkpoints_dir):
             os.makedirs(self.checkpoints_dir)
         if self.save_weights_only:
@@ -72,7 +71,10 @@ class Trainer(object):
         else:
             self.discriminator.save(os.path.join(self.checkpoints_dir, d_title))
             self.generator.save(os.path.join(self.checkpoints_dir, g_title))
-    
+ 
+        if self.at_store_checkpoint_hook is not None:
+            self.at_store_checkpoint_hook(self.current_epoch)
+   
     def train_one_step(self, discriminator_loss_list, generator_loss_list):
         for j in range(self.training_ratio):
             discrimiantor_batch = self.dataset.next_discriminator_sample()

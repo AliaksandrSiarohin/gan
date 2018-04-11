@@ -611,6 +611,7 @@ class DecorelationNormalization(Layer):
         self.moving_cov_initializer = initializers.get(moving_cov_initializer)
         self.axis = -1
         self.renorm = renorm
+	assert not renorm
 
     def build(self, input_shape):
         dim = input_shape[self.axis]
@@ -647,38 +648,35 @@ class DecorelationNormalization(Layer):
         m = ktf.reduce_mean(x_flat, axis=1, keep_dims=True)
         m = K.in_train_phase(m, self.moving_mean)
         f = x_flat - m
-        ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
-        ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
-        ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
 
-        #inv = ktf.matrix_inverse()
-        l = ktf.cholesky(ff_apr_shrinked)
-        inv_sqrt_diff = ktf.matrix_triangular_solve(l, ktf.eye(c))
-        #inv_l = ktf.matrix_inverse(l)
-        #inv_sqrt_diff = inv_l
+        def train():
+                ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
+                ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
+         	l = ktf.cholesky(ff_apr_shrinked)
+                self.add_update([K.moving_average_update(self.moving_mean,
+                                                     m,
+                                                     self.momentum),
+                                 K.moving_average_update(self.moving_cov,
+                                                     ff_apr,
+                                                     self.momentum)],
+                                inputs) 
+        	return ktf.matrix_triangular_solve(l, ktf.eye(c))
 
-        #inv = ktf.matrix_inverse((1 - self.epsilon) * ff_mov + ktf.eye(c) * self.epsilon)
-        l = ktf.cholesky(ff_mov)
-        inv_sqrt_mov = ktf.matrix_triangular_solve(l, ktf.eye(c))
-        #inv_sqrt_mov =  K.transpose(l)
+        def test():
+                ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
+        	l = ktf.cholesky(ff_mov)
+        	return ktf.matrix_triangular_solve(l, ktf.eye(c))
+        
+        #l_st = K.stop_gradient(l)
+        #if self.renorm:
+        #    inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, l_st), inv_sqrt_diff)
 
-        l_st = K.stop_gradient(l)
-        if self.renorm:
-            inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, l_st), inv_sqrt_diff)
-
-        inv_sqrt = K.in_train_phase(inv_sqrt_diff, inv_sqrt_mov)
+        inv_sqrt = ktf.cond(K.learning_phase(), train, test)
         f_hat = ktf.matmul(inv_sqrt, f)
 
         decorelated = K.reshape(f_hat, [c, bs, w, h])
         decorelated = ktf.transpose(decorelated, [1, 2, 3, 0])
 
-        self.add_update([K.moving_average_update(self.moving_mean,
-                                                     m,
-                                                     self.momentum),
-                         K.moving_average_update(self.moving_cov,
-                                                     ff_apr,
-                                                     self.momentum)],
-                         inputs)
         return decorelated
 
     def get_config(self):

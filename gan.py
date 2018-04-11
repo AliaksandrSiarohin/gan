@@ -220,9 +220,12 @@ class GAN(object):
         loss_list += self.additional_generator_losses()
         self.generator_loss_list = loss_list
 
-        updates = self.generator_optimizer.get_updates(params=self.generator.trainable_weights, loss=sum(loss_list))
+        updates = []
+
+        updates += self.collect_updates(self.discriminator)
         updates += self.collect_updates(self.generator)
-        print (self.collect_updates(self.generator))
+        print (updates) 
+        updates += self.generator_optimizer.get_updates(params=self.generator.trainable_weights, loss=sum(loss_list))
 
         lr_update = (self.lr_decay_schedule_generator(self.generator_optimizer.iterations) *
                                 K.get_value(self.generator_optimizer.lr))
@@ -239,9 +242,14 @@ class GAN(object):
         loss_list += self.get_gradient_penalty_loss()
         loss_list += self.additional_discriminator_losses()
 
-        updates = self.discriminator_optimizer.get_updates(params=self.discriminator.trainable_weights, loss=sum(loss_list))
+        updates = []
+
         updates += self.collect_updates(self.discriminator)
-        print (self.collect_updates(self.discriminator))
+        updates += self.collect_updates(self.generator)
+
+        print (updates)
+        updates += self.discriminator_optimizer.get_updates(params=self.discriminator.trainable_weights, loss=sum(loss_list))
+              
 
         inputs = self.discriminator_input + self.additional_inputs_for_discriminator_train +\
                  self.generator_input + self.additional_inputs_for_generator_train
