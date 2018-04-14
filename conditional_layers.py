@@ -5,7 +5,7 @@ from keras import backend as K
 from keras.backend import tf as ktf
 from keras.utils import conv_utils
 from keras import activations
-from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, Add, AveragePooling2D, Reshape
+from keras.layers import BatchNormalization, Conv2D, UpSampling2D, Activation, Add, AveragePooling2D, Reshape, LeakyReLU
 from keras.legacy import interfaces
 from layer_utils import he_init, glorot_init
 from keras.optimizers import Adam
@@ -1326,12 +1326,8 @@ def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
         return Add()([out_u, out_c])
     return layer
 
-def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, name,
-                  norm=BatchNormalization, is_first=False, conv_layer=Conv2D,
-                  cls_conv=None,
-                  cond_conv_layer=ConditionalConv11,
-                  cond_bottleneck=False, uncond_bottleneck=False,
-                  uncond_shortcut=True, cond_shortcut=False):
+
+def cond_resblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
     assert resample in ["UP", "SAME", "DOWN"]
 
     feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
@@ -1348,33 +1344,19 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     else:
         resample_op = identity
 
-    def conditional_plus_unconditional_block(inp, cond, uncond, sub_name):
-        merge_layers = []
+    in_filters = K.int_shape(x)[feature_axis]
 
-        if cond:
-            cond_bottleneck_path = cond_conv_layer(number_of_classes=number_of_classes, filters=nfilters,
-                                         kernel_initializer=he_init, name=name + '_cond_' + sub_name)([inp, cls])
-            merge_layers.append(cond_bottleneck_path)
-
-        if uncond:
-            uncond_bottleneck_path = conv_layer(kernel_size=(1, 1), filters=nfilters,
-                                     kernel_initializer=he_init, name=name + '_uncond_' + sub_name)(inp)
-            merge_layers.append(uncond_bottleneck_path)
-
-        out = inp
-        if len(merge_layers) == 2:
-            out = Add()(merge_layers)
-        elif len(merge_layers) == 1:
-            out = merge_layers[0]
-
-        return out
+    if resample == "SAME" and in_filters == nfilters:
+        shortcut_layer = identity
+    else:
+        shortcut_layer = Conv2D(kernel_size=(1, 1), filters=nfilters, kernel_initializer=he_init, name=name + 'shortcut')
 
     ### SHORTCUT PAHT
     if is_first:
         shortcut = resample_op(x)
-        shortcut = conditional_plus_unconditional_block(shortcut, cond_shortcut, uncond_shortcut, 'shortcut')
+        shortcut = shortcut_layer(shortcut)
     else:
-        shortcut = conditional_plus_unconditional_block(x, cond_shortcut, uncond_shortcut, 'shortcut')
+        shortcut = shortcut_layer(x)
         shortcut = resample_op(shortcut)
 
     ### CONV PATH
@@ -1391,43 +1373,41 @@ def cond_resblock(x, cls, kernel_size, resample, nfilters, number_of_classes, na
     convpath = norm(axis=feature_axis, name=name + '_bn2')(convpath)
     convpath = Activation('relu')(convpath)
 
-    convpath = conditional_plus_unconditional_block(convpath, cond_bottleneck, uncond_bottleneck, 'bottleneck')
-    if cond_bottleneck or uncond_bottleneck:
-        convpath = norm(axis=feature_axis, name=name + '_bn3')(convpath)
-        convpath = Activation('relu')(convpath)
-
     convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
                           use_bias=True, padding='same', name=name + '_conv2')(convpath)
 
     if resample == "DOWN":
         convpath = resample_op(convpath)
 
-
-    if cls_conv is not None:
-        cls_convpath = x
-        if not is_first:
-            cls_convpath = norm(axis=feature_axis, name=name + '_cls' + '_bn1')(cls_convpath)
-            cls_convpath = Activation('relu')(cls_convpath)
-        if resample == "UP":
-            cls_convpath = resample_op(cls_convpath)
-
-        cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                use_bias=True, padding='same', name=name + '_cls' + '_conv1')(cls_convpath)
-
-        cls_convpath = norm(axis=feature_axis, name=name  + '_cls' + '_bn2')(cls_convpath)
-        cls_convpath = Activation('relu')(cls_convpath)
-
-        cls_convpath = cls_conv(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                use_bias=True, padding='same', name=name  + '_cls' + '_conv2')(cls_convpath)
-
-        if resample == "DOWN":
-            cls_convpath = resample_op(cls_convpath)
-        convpath = Add()([convpath, cls_convpath])
-
     y = Add()([shortcut, convpath])
 
     return y
 
+
+def cond_dcblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
+    assert resample in ["UP", "SAME", "DOWN"]
+
+    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
+
+    if resample == "UP":
+        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(x)
+        convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+        convpath = Activation('relu', name=name + 'relu')(convpath)
+    elif resample == "SAME":
+        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(x)
+        if is_first:
+            convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+        convpath = LeakyReLU(name=name + 'relu')(convpath)
+    elif resample == "DOWN":
+        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(x)
+        if is_first:
+            convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+        convpath = LeakyReLU(name=name + 'relu')(convpath)
+
+    return convpath
 
 
 def test_conditional_dense():
