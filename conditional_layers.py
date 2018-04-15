@@ -1389,24 +1389,25 @@ def cond_dcblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalizati
 
     feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
 
+    convpath = x
     if resample == "UP":
-        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
-                              name=name + '.conv', padding='same')(x)
         convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
         convpath = Activation('relu', name=name + 'relu')(convpath)
+        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(convpath)
     elif resample == "SAME":
-        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
-                              name=name + '.conv', padding='same')(x)
-        if is_first:
-            convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
-        convpath = LeakyReLU(name=name + 'relu')(convpath)
+       if is_first:
+           convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+       convpath = LeakyReLU(name=name + 'relu')(convpath)
+ 
+       convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(convpath)
     elif resample == "DOWN":
-        convpath = conv_layer(x, filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
-                              name=name + '.conv', padding='same')(x)
         if is_first:
             convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
         convpath = LeakyReLU(name=name + 'relu')(convpath)
-
+        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(convpath)
     return convpath
 
 

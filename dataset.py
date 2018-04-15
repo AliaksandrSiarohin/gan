@@ -110,7 +110,7 @@ class LabeledArrayDataset(ArrayDataset):
             self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
 
         if y_test is not None:
-            if len(y.shape) == 1:
+            if len(y_test.shape) == 1:
                 self._Y_test = np.expand_dims(y_test, axis=1)
 
     def number_of_batches_per_epoch(self):
