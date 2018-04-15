@@ -111,7 +111,7 @@ class LabeledArrayDataset(ArrayDataset):
             self.number_of_classes = len(np.unique(self._Y))
 
         if y_test is not None:
-            if len(y.shape) == 1:
+            if len(y_test.shape) == 1:
                 self._Y_test = np.expand_dims(y_test, axis=1)
 
 
