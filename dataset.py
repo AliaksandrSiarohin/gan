@@ -108,10 +108,13 @@ class LabeledArrayDataset(ArrayDataset):
             if len(y.shape) == 1:
                 self._Y = np.expand_dims(y, axis=1)
             self._cls_prob = np.bincount(np.squeeze(self._Y, axis=1)) / float(self._Y.shape[0])
+            self.number_of_classes = len(np.unique(self._Y))
 
         if y_test is not None:
             if len(y.shape) == 1:
                 self._Y_test = np.expand_dims(y_test, axis=1)
+
+
 
     def number_of_batches_per_epoch(self):
         return 1000
@@ -124,7 +127,8 @@ class LabeledArrayDataset(ArrayDataset):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size)] + labels
 
     def next_generator_sample_test(self):
-        labels = [] if self._Y is None else [(np.arange(self._batch_size) % 10).reshape((self._batch_size,1))]
+        labels = [] if self._Y is None else [np.random.randint(self.number_of_classes, size=(self._batch_size, 1))]
+        # [(np.arange(self._batch_size) % self.number_of_classes).reshape((self._batch_size,1))]
         return [np.random.normal(size=(self._batch_size,) + self._noise_size)] + labels
 
     def _load_discriminator_data(self, index):
