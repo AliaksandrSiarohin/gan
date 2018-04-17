@@ -1536,7 +1536,7 @@ def cond_resblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalizat
     if resample == "SAME" and in_filters == nfilters:
         shortcut_layer = identity
     else:
-        shortcut_layer = Conv2D(kernel_size=(1, 1), filters=nfilters, kernel_initializer=he_init, name=name + 'shortcut')
+        shortcut_layer = conv_layer(kernel_size=(1, 1), filters=nfilters, kernel_initializer=he_init, name=name + 'shortcut')
 
     ### SHORTCUT PAHT
     if is_first:
