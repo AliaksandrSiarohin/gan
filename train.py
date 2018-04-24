@@ -128,8 +128,8 @@ class Trainer(object):
                                                                       np.mean(np.array(discriminator_loss_list), axis=0))
             print (val_loss_str.replace('Generator loss', 'Validation loss'))
 
-        print "Generator lr %s" % K.get_value(self.gan.discriminator_optimizer.lr)
-        print "Discriminator lr %s" % K.get_value(self.gan.generator_optimizer.lr)
+        print "Discriminator lr %s" % K.get_value(self.gan.discriminator_optimizer.lr)
+        print "Generator lr %s" % K.get_value(self.gan.generator_optimizer.lr)
         
     def train(self):
         while (self.current_epoch < self.last_epoch):            
