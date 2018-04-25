@@ -16,21 +16,20 @@ class ConditionalAdamOptimizer(Adam):
     def __init__(self, number_of_classes, **kwargs):
         super(ConditionalAdamOptimizer, self).__init__(**kwargs)
         self.number_of_classes = number_of_classes
-        self.lr_conditional = number_of_classes * K.variable(self.lr, name='lr')
 
     def get_updates(self, loss, params):
-        conditional_params = [param for param in params if '_cond_' in param.name]
-        unconditional_params = [param for param in params if '_cond_' not in param.name]
+        conditional_params = [param for param in params if '_repart_c' in param.name]
+        unconditional_params = [param for param in params if '_repart_c' not in param.name]
 
-        print (conditional_params)
-        print (unconditional_params)
+        # print (conditional_params)
+        # print (unconditional_params)
 
         print (len(params))
         print (len(conditional_params))
         print (len(unconditional_params))
 
         lr = self.lr
-        self.lr = self.lr_conditional
+        self.lr = lr / self.number_of_classes
         updates = super(ConditionalAdamOptimizer, self).get_updates(loss, conditional_params)
         self.lr = lr
         updates += super(ConditionalAdamOptimizer, self).get_updates(loss, unconditional_params)
