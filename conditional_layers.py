@@ -13,10 +13,17 @@ from keras.initializers import Identity
 
 
 class ConditionalAdamOptimizer(Adam):
-    def __init__(self, number_of_classes, **kwargs):
+    def __init__(self, lr_decay_schedule=None, **kwargs):
         super(ConditionalAdamOptimizer, self).__init__(**kwargs)
-        self.number_of_classes = number_of_classes
+        self.lr_decay_schedule = lr_decay_schedule
 
+        if lr_decay_schedule.startswith('dropatc'):
+            drop_at = int(lr_decay_schedule.replace('dropatc', ''))
+            drop_at_generator = drop_at * 1000
+            self.lr_decay_schedule_generator = lambda iter: ktf.where(K.less(iter, drop_at_generator), 1.,  0.1)
+	else:
+            self.lr_decay_schedule_generator = lambda iter: 1.
+	
     def get_updates(self, loss, params):
         conditional_params = [param for param in params if '_repart_c' in param.name]
         unconditional_params = [param for param in params if '_repart_c' not in param.name]
@@ -28,8 +35,10 @@ class ConditionalAdamOptimizer(Adam):
         print (len(conditional_params))
         print (len(unconditional_params))
 
+              
+
         lr = self.lr
-        self.lr = lr / self.number_of_classes
+        self.lr = self.lr_decay_schedule_generator(self.iterations) * lr
         updates = super(ConditionalAdamOptimizer, self).get_updates(loss, conditional_params)
         self.lr = lr
         updates += super(ConditionalAdamOptimizer, self).get_updates(loss, unconditional_params)
