@@ -39,11 +39,11 @@ class ConditionalAdamOptimizer(Adam):
 
         lr = self.lr
         self.lr = self.lr_decay_schedule_generator(self.iterations) * lr
-        updates = super(ConditionalAdamOptimizer, self).get_updates(loss, conditional_params)
+        updates = super(ConditionalAdamOptimizer, self).get_updates(loss, conditional_params)[1:]
         self.lr = lr
         updates += super(ConditionalAdamOptimizer, self).get_updates(loss, unconditional_params)
 
-        updates.append(K.update_sub(self.iterations, 1))
+        #updates.append(K.update_sub(self.iterations, 1))
 
         return updates
 
