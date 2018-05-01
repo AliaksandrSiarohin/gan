@@ -94,11 +94,12 @@ class FolderDataset(UGANDataset):
 
 
 class LabeledArrayDataset(ArrayDataset):
-    def __init__(self, X, X_test, batch_size, y=None, y_test=None, noise_size=(128, )):
+    def __init__(self, X, X_test, batch_size, y=None, y_test=None, noise_size=(128, ), dequantize = True):
         X = (X.astype(np.float32) - 127.5) / 127.5
         X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-        #dequantize
-        X += np.random.uniform(0, 1/128.0, size=X.shape)
+        
+        if dequantize:
+            X += np.random.uniform(0, 1/128.0, size=X.shape)
         super(LabeledArrayDataset, self).__init__(X, batch_size, noise_size)
 
         self._Y = y

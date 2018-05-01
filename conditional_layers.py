@@ -667,8 +667,16 @@ class DecorelationNormalization(Layer):
                                  K.moving_average_update(self.moving_cov,
                                                      ff_apr,
                                                      self.momentum)],
-                                inputs) 
-        	return ktf.matrix_triangular_solve(l, ktf.eye(c))
+                                inputs)
+                if self.renorm:
+        	    l_inv = ktf.matrix_triangular_solve(l, ktf.eye(c))
+                    ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
+        	    l_mov = ktf.cholesky(ff_mov)
+                    l_mov_inverse =  ktf.matrix_triangular_solve(l_mov, ktf.eye(c))
+                    l_ndiff = K.stop_grad(l)
+                    return ktf.matmul(ktf.matmul(l_mov_inverse, l_ndiff), l_inv)
+               
+                return ktf.matrix_triangular_solve(l, ktf.eye(c))
 
         def test():
                 ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
