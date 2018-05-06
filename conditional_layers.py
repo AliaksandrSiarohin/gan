@@ -619,7 +619,7 @@ class DecorelationNormalization(Layer):
         self.moving_cov_initializer = initializers.get(moving_cov_initializer)
         self.axis = -1
         self.renorm = renorm
-	assert not renorm
+	#assert not renorm
 
     def build(self, input_shape):
         dim = input_shape[self.axis]
@@ -673,7 +673,7 @@ class DecorelationNormalization(Layer):
                     ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
         	    l_mov = ktf.cholesky(ff_mov)
                     l_mov_inverse =  ktf.matrix_triangular_solve(l_mov, ktf.eye(c))
-                    l_ndiff = K.stop_grad(l)
+                    l_ndiff = K.stop_gradient(l)
                     return ktf.matmul(ktf.matmul(l_mov_inverse, l_ndiff), l_inv)
                
                 return ktf.matrix_triangular_solve(l, ktf.eye(c))
