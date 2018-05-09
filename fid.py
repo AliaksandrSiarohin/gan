@@ -233,14 +233,18 @@ def calculate_fid_given_paths(paths, inception_path):
         fid_value = calculate_frechet_distance(m1, s1, m2, s2)
         return fid_value
 
+initialized = False
 
 def calculate_fid_given_arrays(arrays, cache_file=None):
     print ("Computing FID...")
-    global m_true_data, s_true_data
-    inception_path = check_or_download_inception(None)
-    create_inception_graph(str(inception_path))
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
+    global m_true_data, s_true_data, initialized
+    if not initialized:
+        inception_path = check_or_download_inception(None)
+        create_inception_graph(str(inception_path))
+        with tf.Session() as sess:
+             sess.run(tf.global_variables_initializer())
+        initialized = True
+    with tf.Session() as sess: 
         if cache_file is None:
             m_true_data, s_true_data = calculate_activation_statistics(arrays[0], sess)
         else:
