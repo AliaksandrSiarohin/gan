@@ -39,9 +39,9 @@ class UGANDataset(object):
         image_batch = self._load_discriminator_data(index)
         return image_batch        
 
-    def display(self, output_batch, input_batch = None):
-        row = output_batch.shape[0]
-        col = 1
+    def display(self, output_batch, input_batch = None, row = None, col = None):
+        row = output_batch.shape[0] if row is None else row
+        col = 1 if col is None else col
         batch = output_batch
         height, width = batch.shape[1], batch.shape[2]
         total_width, total_height = width * col, height * row
