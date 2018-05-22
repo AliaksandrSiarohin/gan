@@ -9,6 +9,7 @@ from keras.models import Input, Model
 from keras.layers.pooling import _GlobalPooling2D
 from keras import backend as K
 from functools import partial
+from keras.layers import LeakyReLU
 
 import numpy as np
 
@@ -50,6 +51,36 @@ def content_features_model(image_size, layer_name='block4_conv1'):
     return Model(inputs=x, outputs=y)
 
 
+class GlobalSumPooling2D(_GlobalPooling2D):
+    """Global sum pooling operation for spatial data.
+    # Arguments
+        data_format: A string,
+            one of `channels_last` (default) or `channels_first`.
+            The ordering of the dimensions in the inputs.
+            `channels_last` corresponds to inputs with shape
+            `(batch, height, width, channels)` while `channels_first`
+            corresponds to inputs with shape
+            `(batch, channels, height, width)`.
+            It defaults to the `image_data_format` value found in your
+            Keras config file at `~/.keras/keras.json`.
+            If you never set it, then it will be "channels_last".
+    # Input shape
+        - If `data_format='channels_last'`:
+            4D tensor with shape:
+            `(batch_size, rows, cols, channels)`
+        - If `data_format='channels_first'`:
+            4D tensor with shape:
+            `(batch_size, channels, rows, cols)`
+    # Output shape
+        2D tensor with shape:
+        `(batch_size, channels)`
+    """
+
+    def call(self, inputs):
+        if self.data_format == 'channels_last':
+            return K.sum(inputs, axis=[1, 2])
+        else:
+            return K.sum(inputs, axis=[2, 3])
 
 class GaussianFromPointsLayer(Layer):
     def __init__(self, sigma=6, image_size=(128, 64), **kwargs):
@@ -100,106 +131,85 @@ he_init = partial(uniform_init, constant=4.0)
 glorot_init = partial(uniform_init, constant=2.0)
 
 
-def resblock(x, kernel_size, resample, nfilters, norm=BatchNormalization, is_first=False, conv_shortcut=True,
-             conv_layer=Conv2D):
+def resblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
     assert resample in ["UP", "SAME", "DOWN"]
 
     feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
+
+    identity = lambda x: x
+
     if norm is None:
-        norm = lambda axis: lambda x: x ##Identity, no normalization
+        norm = lambda axis, name: identity
 
     if resample == "UP":
-        shortcut = UpSampling2D(size=(2, 2)) (x)
-        shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), padding = 'same',
-                          kernel_initializer=glorot_init, use_bias = True) (shortcut)
-
-        convpath = x
-        if not is_first:
-            convpath = norm(axis=feature_axis)(convpath)
-            convpath = Activation('relu') (convpath)
-        convpath = UpSampling2D(size=(2, 2))(convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size,
-                              kernel_initializer=he_init, use_bias=True, padding='same')(convpath)
-        convpath = norm(axis=feature_axis)(convpath)
-        convpath = Activation('relu')(convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                              use_bias=True, padding='same') (convpath)
-
-        y = Add() ([shortcut, convpath])
-    elif resample == "SAME":
-        if conv_shortcut:
-            shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), padding = 'same',
-                              kernel_initializer=glorot_init, use_bias = True) (x)
-        else:
-            shortcut = x
-
-        convpath = x
-        if not is_first:
-            convpath = norm(axis=feature_axis)(convpath)
-            convpath = Activation('relu') (convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                               use_bias=True, padding='same')(convpath)
-        convpath = norm(axis=feature_axis)(convpath)
-        convpath = Activation('relu') (convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                 use_bias=True, padding='same') (convpath)
-
-        y = Add() ([shortcut, convpath])
-
+        resample_op = UpSampling2D(size=(2, 2), name=name + '_up')
+    elif resample == "DOWN":
+        resample_op = AveragePooling2D(pool_size=(2, 2), name=name + '_pool')
     else:
-        if not is_first:
-            shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), kernel_initializer=glorot_init,
-                              padding = 'same', use_bias=True) (x)
-            shortcut = AveragePooling2D(pool_size=(2, 2))(shortcut)
-        else:
-            shortcut = AveragePooling2D(pool_size=(2, 2))(x)
-            shortcut = conv_layer(filters=nfilters, kernel_size=(1, 1), kernel_initializer=he_init,
-                                  padding = 'same', use_bias=True) (shortcut)
+        resample_op = identity
 
+    in_filters = K.int_shape(x)[feature_axis]
 
-        convpath = x
-        if not is_first:
-            convpath = norm(axis=feature_axis)(convpath)
-            convpath = Activation('relu') (convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                 use_bias=True, padding='same')(convpath)
-        if not is_first:
-            convpath = norm(axis=feature_axis)(convpath)
+    if resample == "SAME" and in_filters == nfilters:
+        shortcut_layer = identity
+    else:
+        shortcut_layer = conv_layer(kernel_size=(1, 1), filters=nfilters, kernel_initializer=he_init, name=name + 'shortcut')
+
+    ### SHORTCUT PAHT
+    if is_first:
+        shortcut = resample_op(x)
+        shortcut = shortcut_layer(shortcut)
+    else:
+        shortcut = shortcut_layer(x)
+        shortcut = resample_op(shortcut)
+
+    ### CONV PATH
+    convpath = x
+    if not is_first:
+        convpath = norm(axis=feature_axis, name=name + '_bn1')(convpath)
         convpath = Activation('relu')(convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                 use_bias=True, padding='same') (convpath)
-        convpath = AveragePooling2D(pool_size = (2, 2))(convpath)
-        y = Add() ([shortcut, convpath])
-        
+    if resample == "UP":
+        convpath = resample_op(convpath)
+
+    convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
+                                      use_bias=True, padding='same', name=name + '_conv1')(convpath)
+
+    convpath = norm(axis=feature_axis, name=name + '_bn2')(convpath)
+    convpath = Activation('relu')(convpath)
+
+    convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
+                          use_bias=True, padding='same', name=name + '_conv2')(convpath)
+
+    if resample == "DOWN":
+        convpath = resample_op(convpath)
+
+    y = Add()([shortcut, convpath])
+
     return y
 
-class GlobalSumPooling2D(_GlobalPooling2D):
-    """Global sum pooling operation for spatial data.
-    # Arguments
-        data_format: A string,
-            one of `channels_last` (default) or `channels_first`.
-            The ordering of the dimensions in the inputs.
-            `channels_last` corresponds to inputs with shape
-            `(batch, height, width, channels)` while `channels_first`
-            corresponds to inputs with shape
-            `(batch, channels, height, width)`.
-            It defaults to the `image_data_format` value found in your
-            Keras config file at `~/.keras/keras.json`.
-            If you never set it, then it will be "channels_last".
-    # Input shape
-        - If `data_format='channels_last'`:
-            4D tensor with shape:
-            `(batch_size, rows, cols, channels)`
-        - If `data_format='channels_first'`:
-            4D tensor with shape:
-            `(batch_size, channels, rows, cols)`
-    # Output shape
-        2D tensor with shape:
-        `(batch_size, channels)`
-    """
 
-    def call(self, inputs):
-        if self.data_format == 'channels_last':
-            return K.sum(inputs, axis=[1, 2])
-        else:
-            return K.sum(inputs, axis=[2, 3])
+def dcblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
+    assert resample in ["UP", "SAME", "DOWN"]
+
+    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
+
+    convpath = x
+    if resample == "UP":
+        convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+        convpath = Activation('relu', name=name + 'relu')(convpath)
+        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(convpath)
+    elif resample == "SAME":
+       if not is_first:
+           convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+           convpath = LeakyReLU(name=name + 'relu')(convpath)
+
+       convpath = conv_layer(filters=nfilters, kernel_size=kernel_size,
+                              name=name + '.conv', padding='same')(convpath)
+    elif resample == "DOWN":
+        if not is_first:
+            convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
+            convpath = LeakyReLU(name=name + 'relu')(convpath)
+        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
+                              name=name + '.conv', padding='same')(convpath)
+    return convpath

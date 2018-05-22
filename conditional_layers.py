@@ -21,9 +21,9 @@ class ConditionalAdamOptimizer(Adam):
             drop_at = int(lr_decay_schedule.replace('dropatc', ''))
             drop_at_generator = drop_at * 1000
             self.lr_decay_schedule_generator = lambda iter: ktf.where(K.less(iter, drop_at_generator), 1.,  0.1)
-	else:
+        else:
             self.lr_decay_schedule_generator = lambda iter: 1.
-	
+
     def get_updates(self, loss, params):
         conditional_params = [param for param in params if '_repart_c' in param.name]
         unconditional_params = [param for param in params if '_repart_c' not in param.name]
@@ -619,7 +619,6 @@ class DecorelationNormalization(Layer):
         self.moving_cov_initializer = initializers.get(moving_cov_initializer)
         self.axis = -1
         self.renorm = renorm
-	#assert not renorm
 
     def build(self, input_shape):
         dim = input_shape[self.axis]
@@ -658,36 +657,36 @@ class DecorelationNormalization(Layer):
         f = x_flat - m
 
         def train():
-                ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
-                ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
-         	l = ktf.cholesky(ff_apr_shrinked)
-                self.add_update([K.moving_average_update(self.moving_mean,
+            ff_apr = ktf.matmul(f, f, transpose_b=True) / (ktf.cast(bs*w*h, ktf.float32) - 1.)
+            ff_apr_shrinked = (1 - self.epsilon) * ff_apr + ktf.eye(c) * self.epsilon
+            l = ktf.cholesky(ff_apr_shrinked)
+            self.add_update([K.moving_average_update(self.moving_mean,
                                                      m,
                                                      self.momentum),
-                                 K.moving_average_update(self.moving_cov,
+                             K.moving_average_update(self.moving_cov,
                                                      ff_apr,
                                                      self.momentum)],
-                                inputs)
-                if self.renorm:
-        	    l_inv = ktf.matrix_triangular_solve(l, ktf.eye(c))
-                    ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
-        	    l_mov = ktf.cholesky(ff_mov)
-                    l_mov_inverse =  ktf.matrix_triangular_solve(l_mov, ktf.eye(c))
-                    l_ndiff = K.stop_gradient(l)
-                    return ktf.matmul(ktf.matmul(l_mov_inverse, l_ndiff), l_inv)
+                             inputs)
+            if self.renorm:
+                l_inv = ktf.matrix_triangular_solve(l, ktf.eye(c))
+                ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
+                l_mov = ktf.cholesky(ff_mov)
+                l_mov_inverse =  ktf.matrix_triangular_solve(l_mov, ktf.eye(c))
+                l_ndiff = K.stop_gradient(l)
+                return ktf.matmul(ktf.matmul(l_mov_inverse, l_ndiff), l_inv)
                
-                return ktf.matrix_triangular_solve(l, ktf.eye(c))
+            return ktf.matrix_triangular_solve(l, ktf.eye(c))
 
         def test():
-                ff_mov =  (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
-        	l = ktf.cholesky(ff_mov)
-        	return ktf.matrix_triangular_solve(l, ktf.eye(c))
+            ff_mov = (1 - self.epsilon) * self.moving_cov + ktf.eye(c) * self.epsilon
+            l = ktf.cholesky(ff_mov)
+            return ktf.matrix_triangular_solve(l, ktf.eye(c))
         
         #l_st = K.stop_gradient(l)
         #if self.renorm:
         #    inv_sqrt_diff = ktf.matmul(ktf.matmul(inv_sqrt_mov, l_st), inv_sqrt_diff)
 
-        inv_sqrt = ktf.cond(K.learning_phase(), train, test)
+        inv_sqrt = K.in_train_phase(train, test)
         f_hat = ktf.matmul(inv_sqrt, f)
 
         decorelated = K.reshape(f_hat, [c, bs, w, h])
@@ -1528,386 +1527,3 @@ def get_separable_conditional_conv(cls, number_of_classes, conv_layer=Conv2D,
                                        kernel_initializer=glorot_init, name=kwargs['name'] + '-c_part')([out, cls])
         return Add()([out_u, out_c])
     return layer
-
-
-def cond_resblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
-    assert resample in ["UP", "SAME", "DOWN"]
-
-    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
-
-    identity = lambda x: x
-
-    if norm is None:
-        norm = lambda axis, name: identity
-
-    if resample == "UP":
-        resample_op = UpSampling2D(size=(2, 2), name=name + '_up')
-    elif resample == "DOWN":
-        resample_op = AveragePooling2D(pool_size=(2, 2), name=name + '_pool')
-    else:
-        resample_op = identity
-
-    in_filters = K.int_shape(x)[feature_axis]
-
-    if resample == "SAME" and in_filters == nfilters:
-        shortcut_layer = identity
-    else:
-        shortcut_layer = conv_layer(kernel_size=(1, 1), filters=nfilters, kernel_initializer=he_init, name=name + 'shortcut')
-
-    ### SHORTCUT PAHT
-    if is_first:
-        shortcut = resample_op(x)
-        shortcut = shortcut_layer(shortcut)
-    else:
-        shortcut = shortcut_layer(x)
-        shortcut = resample_op(shortcut)
-
-    ### CONV PATH
-    convpath = x
-    if not is_first:
-        convpath = norm(axis=feature_axis, name=name + '_bn1')(convpath)
-        convpath = Activation('relu')(convpath)
-    if resample == "UP":
-        convpath = resample_op(convpath)
-
-    convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                                      use_bias=True, padding='same', name=name + '_conv1')(convpath)
-
-    convpath = norm(axis=feature_axis, name=name + '_bn2')(convpath)
-    convpath = Activation('relu')(convpath)
-
-    convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, kernel_initializer=he_init,
-                          use_bias=True, padding='same', name=name + '_conv2')(convpath)
-
-    if resample == "DOWN":
-        convpath = resample_op(convpath)
-
-    y = Add()([shortcut, convpath])
-
-    return y
-
-
-def cond_dcblock(x, kernel_size, resample, nfilters, name, norm=BatchNormalization, is_first=False, conv_layer=Conv2D):
-    assert resample in ["UP", "SAME", "DOWN"]
-
-    feature_axis = 1 if K.image_data_format() == 'channels_first' else -1
-
-    convpath = x
-    if resample == "UP":
-        convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
-        convpath = Activation('relu', name=name + 'relu')(convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
-                              name=name + '.conv', padding='same')(convpath)
-    elif resample == "SAME":
-       if not is_first:
-           convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
-           convpath = LeakyReLU(name=name + 'relu')(convpath)
- 
-       convpath = conv_layer(filters=nfilters, kernel_size=kernel_size,
-                              name=name + '.conv', padding='same')(convpath)
-    elif resample == "DOWN":
-        if not is_first:
-            convpath = norm(axis=feature_axis, name=name + '.bn')(convpath)
-            convpath = LeakyReLU(name=name + 'relu')(convpath)
-        convpath = conv_layer(filters=nfilters, kernel_size=kernel_size, strides=(2, 2),
-                              name=name + '.conv', padding='same')(convpath)
-    return convpath
-
-
-def test_conditional_dense():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        np.random.seed(0)
-        return np.random.normal(size=shape)
-
-    inp = Input((2,))
-    cls = Input((1, ), dtype='int32')
-    dence = ConditionalDense(number_of_classes=3, units=2, use_bias=True,
-                            kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
-    rs_inp = Reshape((1, 1, 2))([inp])
-    cv_sep = ConditionalConv2D(number_of_classes=3, kernel_size=(1, 1), filters=2, padding='valid', use_bias=True,
-                               kernel_initializer=kernel_init, bias_initializer=kernel_init)([rs_inp, cls])
-    m = Model([inp, cls], [dence, cv_sep])
-    x = np.arange(2 * 2).reshape((2, 2))
-    cls = np.expand_dims(np.arange(2) % 3, axis=-1)
-    out1, out2 = m.predict([x, cls])
-    out2 = np.squeeze(out2, axis=(1, 2))
-
-    assert np.sum(np.abs(out1 - out2)) < 1e-5
-
-
-def test_conditional_conv11():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        np.random.seed(0)
-        return np.random.normal(size=shape)
-
-    inp = Input(batch_shape = (10, 10, 10, 10))
-    cls = Input(batch_shape = (10, 1), dtype='int32')
-    cv11 = ConditionalConv11(number_of_classes=3, filters=20,
-                                            kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
-    cv_sep = ConditionalConv2D(number_of_classes=3, kernel_size=(1, 1), filters=20, padding='valid', use_bias=True,
-                               kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls])
-    m = Model([inp, cls], [cv11, cv_sep])
-    x = np.arange(10 * 1000).reshape((10, 10, 10, 10))
-    cls = np.expand_dims(np.arange(10) % 3, axis=-1)
-    out1, out2 = m.predict([x, cls])
-
-    assert np.sum(np.abs(out1 - out2)) < 1e-5
-
-
-def test_conditional_instance():
-    from keras.models import Model, Input
-    import numpy as np
-    def beta_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-    inp = Input((2, 2, 1))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], ConditionalInstanceNormalization(3, axis=-1, gamma_initializer=beta_init,
-                                                           beta_initializer=beta_init)([inp, cls]))
-    x = np.ones((3, 2, 2, 1))
-    cls = np.expand_dims(np.arange(3), axis=-1)
-    out = m.predict([x, cls])
-
-    assert np.all(out[0] == 1)
-    assert np.all(out[1] == 2)
-    assert np.all(out[2] == 3)
-
-
-def test_conditional_center_scale():
-    from keras.models import Model, Input
-    import numpy as np
-    def beta_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-    inp = Input((2, 2, 1))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], ConditionalCenterScale(3, axis=-1, gamma_initializer=beta_init,
-                                                            beta_initializer=beta_init)([inp, cls]))
-    x = np.ones((3, 2, 2, 1))
-    cls = np.expand_dims(np.arange(3), axis=-1)
-    out = m.predict([x, cls])
-
-    assert np.all(out[0] == 2)
-    assert np.all(out[1] == 4)
-    assert np.all(out[2] == 6)
-
-
-def test_center_scale():
-    from keras.models import Model, Input
-    import numpy as np
-    def beta_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-    inp = Input((2, 2, 3))
-    m = Model([inp], CenterScale(axis=-1, gamma_initializer=beta_init,
-                                             beta_initializer=beta_init)(inp))
-    x = np.ones((3, 2, 2, 3))
-    out = m.predict(x)
-
-    assert np.all(out[..., 0] == 2)
-    assert np.all(out[..., 1] == 4)
-    assert np.all(out[..., 2] == 6)
-
-
-def test_conditional_bn():
-    from keras.models import Model, Input
-    import numpy as np
-    def beta_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-    K.set_learning_phase(0)
-    inp = Input((2, 2, 1))
-    cls = Input((1, ), dtype='int32')
-    out = ConditinalBatchNormalization(3, axis=-1, gamma_initializer=beta_init,
-                                                   moving_variance_initializer=lambda sh: 0.666666666667 * np.ones(sh),
-                                                   beta_initializer='zeros',
-                                                   moving_mean_initializer=lambda sh: 2 * np.ones(sh))([inp, cls])
-    m = Model([inp, cls], out)
-    x = np.ones((3, 2, 2, 1))
-
-    x[1] = x[1] * 2
-    x[2] = x[2] * 3
-
-    cls = np.expand_dims(np.arange(3), axis=-1)
-    out = m.predict([x, cls])
-    out = np.squeeze(out)
-
-    assert np.all(np.abs(out[0] + 1.22) < 0.1)
-    assert np.all(np.abs(out[1] - 0) < 0.1)
-    assert np.all(np.abs(out[2] - 3.67) < 0.1)
-
-
-def test_conditional_conv():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-
-    inp = Input((2, 2, 1))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], ConditionalConv2D(number_of_classes=3, filters=1,
-             kernel_size=(3, 3), padding='same', kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls]))
-    x = np.ones((3, 2, 2, 1))
-    cls = np.expand_dims(np.arange(3), axis=-1)
-    cls[2] = 0
-    out = m.predict([x, cls])
-
-    assert np.all(out[0] == 5)
-    assert np.all(out[1] == 10)
-    assert np.all(out[2] == 5)
-
-
-def test_triangular_conv11():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        a = np.empty(shape)
-        a[..., 0] = 1
-        a[..., 1] = 2
-        #a[1] = 2
-        #a[2] = 3
-        return a
-
-    inp = Input((2, 2, 2))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], ConditionalConv11(number_of_classes=1, filters=2, triangular=True,
-                          kernel_initializer=kernel_init, bias_initializer='zeros')([inp, cls]))
-    x = np.ones((1, 2, 2, 2))
-    cls = np.expand_dims(np.arange(1), axis=-1)
-    cls[:] = 0
-    out = m.predict([x, cls])
-    assert np.all(out[0, ..., 0] == 1)
-    assert np.all(out[0, ..., 1] == 4)
-
-
-def test_triangular_factorized_conv11():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        if shape[0] != 1:
-            a[1] = 2
-        #a[1] = 2
-        #a[2] = 3
-        return a
-
-    inp = Input((2, 2, 2))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], FactorizedConditionalConv11(number_of_classes=2, filters=2, filters_emb=1,
-                                    kernel_initializer=kernel_init, bias_initializer='zeros')([inp, cls]))
-    x = np.ones((2, 2, 2, 2))
-    cls = np.expand_dims(np.arange(2), axis=-1)
-    #cls[:] = 0
-    out = m.predict([x, cls])
-    #print np.squeeze(out[0])
-    #print np.squeeze(out[1])
-    assert np.all(out[0] == 2)
-    assert np.all(out[1] == 2)
-
-
-def test_deptwise_conv():
-    from keras.models import Model, Input
-    import numpy as np
-    def kernel_init(shape):
-        a = np.empty(shape)
-        a[0, ..., 0] = 1
-        a[1, ..., 0] = 2
-        a[2, ..., 0] = 3
-
-        a[0, ..., 1] = 2
-        a[1, ..., 1] = 3
-        a[2, ..., 1] = 5
-
-        return a
-
-    inp = Input((2, 2, 2))
-    cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], ConditionalDepthwiseConv2D(number_of_classes=3, filters=2,
-             kernel_size=(3, 3), padding='same', kernel_initializer=kernel_init, bias_initializer=kernel_init)([inp, cls]))
-    x = np.ones((3, 2, 2, 2))
-    cls = np.expand_dims(np.arange(3), axis=-1)
-    cls[2] = 0
-    out = m.predict([x, cls])
-
-    assert np.all(out[0, ..., 0] == 5)
-    assert np.all(out[1, ..., 0] == 10)
-    assert np.all(out[2, ..., 0] == 5)
-
-    assert np.all(out[0, ..., 1] == 10)
-    assert np.all(out[1, ..., 1] == 15)
-    assert np.all(out[2, ..., 1] == 10)
-
-def test_decorelation():
-    from keras.models import Model, Input
-    from keras.layers import Lambda
-    import numpy as np
-    def beta_init(shape):
-        a = np.empty(shape)
-        a[0] = 1
-        a[1] = 2
-        a[2] = 3
-        return a
-    K.set_learning_phase(1)
-    inp = Input((10, 10, 64))
-    bn = BatchNormalization(center=False, scale=False)(inp)
-    out1 =  bn#Lambda(lambda x: K.gradients(K.sum(bn ** 2), inp))(bn)
-    decor_l = DecorelationNormalization(renorm=False)
-    decor = decor_l(inp)
-    decor_l.stateful = True
-    out = decor# Lambda(lambda x: K.gradients(K.sum(decor ** 2), inp))(decor)
-
-    m = Model([inp], [out, out1])
-
-    cov = 0.5 * np.eye(64) + 0.5 * np.ones((64, 64))
-    # cov[0, 1] = 32
-    # cov[1, 0] = 32
-    x = np.random.multivariate_normal(mean=np.ones(64), cov=cov, size=(10, 10, 10))
-    out, out1 = m.predict(x)
-    print K.get_value(decor_l.moving_cov)
-
-    #x[1] = x[1] * 2
-    #x[2] = x[2] * 3
-
-
-    print np.mean(out1 ** 2)
-    print np.mean(out ** 2)
-    #print np.abs(out - out1)
-    out = np.reshape(out, [-1, out.shape[-1]])
-    out1 = np.reshape(out1, [-1, out.shape[-1]])
-    x = np.reshape(x, [-1, x.shape[-1]])
-    print (np.cov(out1, rowvar=False))
-    print (np.cov(out, rowvar=False))
-
-if __name__ == "__main__":
-    #test_conditional_conv()
-    #test_conditional_instance()
-    #test_conditional_conv11()
-    #test_triangular_conv11()
-    #test_conditional_dense()
-    #test_deptwise_conv()
-    #test_conditional_bn()
-    #test_decorelation()
-    #test_conditional_center_scale()
-    #test_center_scale()
-    test_triangular_factorized_conv11()
