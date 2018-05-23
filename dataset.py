@@ -58,9 +58,10 @@ class ArrayDataset(UGANDataset):
     def __init__(self, X, batch_size, noise_size):
         super(ArrayDataset, self).__init__(batch_size, noise_size)
         self._X = X
-        self._batches_before_shuffle = int(X.shape[0] // self._batch_size)
+        self._batches_before_shuffle = X.shape[0] // self._batch_size + 1
     
     def _load_discriminator_data(self, index):
+        index = index % self._X.shape[0]
         return [self._X[index]]
     
     def _shuffle_data(self):
@@ -73,7 +74,7 @@ class FolderDataset(UGANDataset):
         self._image_names = np.array(os.listdir(input_dir))
         self._input_dir = input_dir
         self._image_size = image_size
-        self._batches_before_shuffle = int(self._image_names.shape[0] // self._batch_size)        
+        self._batches_before_shuffle = self._image_names.shape[0] // self._batch_size + 1      
         
     def _preprocess_image(self, img):
         return resize(img, self._image_size) * 2 - 1
@@ -82,6 +83,7 @@ class FolderDataset(UGANDataset):
         return img_as_ubyte((img + 1) / 2)
         
     def _load_discriminator_data(self, index):
+        index = index % len(self._image_names)
         return [np.array([self._preprocess_image(plt.imread(os.path.join(self._input_dir, img_name)))
                           for img_name in self._image_names[index]])]
     
@@ -133,6 +135,7 @@ class LabeledArrayDataset(ArrayDataset):
         return [np.random.normal(size=(self._batch_size,) + self._noise_size)] + labels
 
     def _load_discriminator_data(self, index):
+        index = index % self._X.shape[0]
         if self._Y is not None:
             self.current_discriminator_labels = [self._Y[index]]
         else:
