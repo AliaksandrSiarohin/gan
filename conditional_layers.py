@@ -881,7 +881,7 @@ class ConditionalConv11(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-class FactorizedConditionalConv11(Layer):
+class FactorizedConv11(Layer):
     def __init__(self, filters,
              number_of_classes,
              filters_emb,
@@ -897,7 +897,7 @@ class FactorizedConditionalConv11(Layer):
              kernel_constraint=None,
              bias_constraint=None,
              **kwargs):
-        super(FactorizedConditionalConv11, self).__init__(**kwargs)
+        super(FactorizedConv11, self).__init__(**kwargs)
         self.filters = filters
         self.filters_emb = filters_emb
         self.kernel_size = conv_utils.normalize_tuple((1, 1), 2, 'kernel_size')
@@ -949,7 +949,7 @@ class FactorizedConditionalConv11(Layer):
                                         constraint=self.bias_constraint)
         else:
             self.bias = None
-        super(FactorizedConditionalConv11, self).build(input_shape)
+        super(FactorizedConv11, self).build(input_shape)
 
     def call(self, inputs):
         cls = inputs[1]
@@ -1064,7 +1064,7 @@ class FactorizedConditionalConv11(Layer):
             'kernel_constraint': constraints.serialize(self.kernel_constraint),
             'bias_constraint': constraints.serialize(self.bias_constraint)
         }
-        base_config = super(FactorizedConditionalConv11, self).get_config()
+        base_config = super(FactorizedConv11, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 

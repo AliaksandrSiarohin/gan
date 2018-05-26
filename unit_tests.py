@@ -555,8 +555,8 @@ def test_triangular_factorized_conv11():
 
     inp = Input((2, 2, 2))
     cls = Input((1, ), dtype='int32')
-    m = Model([inp, cls], FactorizedConditionalConv11(number_of_classes=2, filters=2, filters_emb=1,
-                                    kernel_initializer=kernel_init, bias_initializer='zeros')([inp, cls]))
+    m = Model([inp, cls], FactorizedConv11(number_of_classes=2, filters=2, filters_emb=1,
+                                           kernel_initializer=kernel_init, bias_initializer='zeros')([inp, cls]))
     x = np.ones((2, 2, 2, 2))
     cls = np.expand_dims(np.arange(2), axis=-1)
     #cls[:] = 0
