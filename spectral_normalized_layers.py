@@ -236,7 +236,7 @@ class SNFactorizedConv11(FactorizedConv11):
         """
         renormalize - if True compute only one sigma for kernel, otherwise compute sigma per class
         """
-        super(FactorizedConv11, self).__init__(**kwargs)
+        super(SNFactorizedConv11, self).__init__(**kwargs)
         self.sigma_initializer = keras.initializers.get(sigma_initializer)
         self.fully_diff_spectral = fully_diff_spectral
         self.spectral_iterations = spectral_iterations
@@ -244,17 +244,17 @@ class SNFactorizedConv11(FactorizedConv11):
         self.renormalize = renormalize
 
     def build(self, input_shape):
-        super(FactorizedConv11, self).build(input_shape)
+        super(SNFactorizedConv11, self).build(input_shape)
         kernel_shape = K.int_shape(self.kernel)
         if not self.renormalize:
             self.u = self.add_weight(
-                shape=(self.number_of_classes, kernel_shape[1] * kernel_shape[2] * kernel_shape[3]),
+                shape=(self.filters_emb, kernel_shape[1] * kernel_shape[2] * kernel_shape[3]),
                 name='largest_singular_value',
                 initializer=self.sigma_initializer,
                 trainable=False)
         else:
             self.u = self.add_weight(
-                shape=(self.number_of_classes * kernel_shape[1] * kernel_shape[2] * kernel_shape[3], ),
+                shape=(self.filters_emb * kernel_shape[1] * kernel_shape[2] * kernel_shape[3], ),
                 name='largest_singular_value',
                 initializer=self.sigma_initializer,
                 trainable=False)
@@ -265,7 +265,7 @@ class SNFactorizedConv11(FactorizedConv11):
             w = K.reshape(self.kernel, (kernel_shape[0], kernel_shape[1] * kernel_shape[2] * kernel_shape[3], kernel_shape[-1]))
             sigma, u_bar = max_singular_val(w, self.u, transpose=lambda x: ktf.transpose(x, [0, 2, 1]),
                                             fully_differentiable=self.fully_diff_spectral, ip=self.spectral_iterations)
-            sigma = K.reshape(sigma, (self.number_of_classes, 1, 1, 1, 1))
+            sigma = K.reshape(sigma, (self.filters_emb, 1, 1, 1, 1))
         else:
             w = K.reshape(self.kernel, (-1, kernel_shape[-1]))
             sigma, u_bar = max_singular_val(w, self.u,
@@ -276,7 +276,7 @@ class SNFactorizedConv11(FactorizedConv11):
 
         kernel = self.kernel
         self.kernel = self.kernel / sigma
-        outputs = super(FactorizedConv11, self).call(inputs)
+        outputs = super(SNFactorizedConv11, self).call(inputs)
         self.kernel = kernel
 
         return outputs
