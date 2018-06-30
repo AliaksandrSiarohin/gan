@@ -624,7 +624,7 @@ def test_decorelation():
     out = m.predict(x)
 
     out = np.reshape(out, [-1, out.shape[-1]])
-
+    #print np.cov(out, rowvar=False)
     assert (np.mean(np.abs(np.cov(out, rowvar=False) - np.eye(64))) < 1e-3)
 
 if __name__ == "__main__":
